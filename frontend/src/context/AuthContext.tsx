@@ -1,0 +1,139 @@
+import React, { createContext, useContext, useState, useEffect } from 'react';
+import { User, UserRole } from '../types';
+import { api, getToken, removeToken } from '../services/apiClient';
+
+interface AuthContextType {
+  user: User | null;
+  role: UserRole;
+  login: (email: string, password: string) => Promise<User>;
+  quickLogin: (role: UserRole) => Promise<User>;
+  logout: () => void;
+  isAuthenticated: boolean;
+  isLoading: boolean;
+  // Dark mode
+  isDarkMode: boolean;
+  toggleDarkMode: () => void;
+}
+
+const DEMO_CREDENTIALS: Record<UserRole, { email: string; pass: string }> = {
+  admin: { email: 'admin@dispatchgrid.dev', pass: 'Admin@1234' },
+  customer: { email: 'alice@example.com', pass: 'Customer@1234' },
+  technician: { email: 'raj.tech@example.com', pass: 'Tech@1234' },
+};
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [user, setUser] = useState<User | null>(() => {
+    const saved = localStorage.getItem('dispatchgrid_user');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  });
+
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+
+  // Dark mode state
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    const saved = localStorage.getItem('dispatchgrid_theme');
+    if (saved) return saved === 'dark';
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  });
+
+  useEffect(() => {
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('dispatchgrid_theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('dispatchgrid_theme', 'light');
+    }
+  }, [isDarkMode]);
+
+  const toggleDarkMode = () => {
+    setIsDarkMode((prev) => !prev);
+  };
+
+  // Check current session on mount
+  useEffect(() => {
+    const initAuth = async () => {
+      const token = getToken();
+      if (token) {
+        try {
+          const me = await api.auth.getMe();
+          const authUser: User = {
+            id: me.id,
+            email: me.email,
+            role: me.role as UserRole,
+            name: me.profile?.name || me.email.split('@')[0],
+            phone: me.profile?.phone,
+          };
+          setUser(authUser);
+          localStorage.setItem('dispatchgrid_user', JSON.stringify(authUser));
+        } catch (err) {
+          console.warn('Session expired or invalid:', err);
+          removeToken();
+          setUser(null);
+        }
+      }
+      setIsLoading(false);
+    };
+
+    initAuth();
+  }, []);
+
+  const login = async (email: string, pass: string): Promise<User> => {
+    const data = await api.auth.login(email, pass);
+    const authUser: User = {
+      id: data.user_id,
+      email: email.toLowerCase(),
+      role: data.role as UserRole,
+      name: data.name || email.split('@')[0],
+      token: data.access_token,
+    };
+    setUser(authUser);
+    localStorage.setItem('dispatchgrid_user', JSON.stringify(authUser));
+    return authUser;
+  };
+
+  const quickLogin = async (targetRole: UserRole): Promise<User> => {
+    const creds = DEMO_CREDENTIALS[targetRole];
+    return await login(creds.email, creds.pass);
+  };
+
+  const logout = () => {
+    api.auth.logout().catch(() => {});
+    setUser(null);
+  };
+
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        role: (user?.role || 'customer') as UserRole,
+        login,
+        quickLogin,
+        logout,
+        isAuthenticated: !!user,
+        isLoading,
+        isDarkMode,
+        toggleDarkMode,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  );
+};
+
+export const useAuth = () => {
+  const context = useContext(AuthContext);
+  if (!context) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+};

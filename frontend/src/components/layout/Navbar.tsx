@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { api } from '../../services/apiClient';
-import { UserRole } from '../../types';
 import { BellIcon, SunIcon, MoonIcon, WrenchIcon, SearchIcon } from '../common/Icons';
 
 export interface NavbarProps {
@@ -14,11 +12,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenNotifications,
   unreadNotificationsCount = 0,
 }) => {
-  const { user, role, logout, quickLogin, isDarkMode, toggleDarkMode } = useAuth();
+  const { user, role, logout, isDarkMode, toggleDarkMode } = useAuth();
   const navigate = useNavigate();
 
   const [backendHealthy, setBackendHealthy] = useState<boolean | null>(null);
-  const [showRoleMenu, setShowRoleMenu] = useState(false);
 
   useEffect(() => {
     // Quick health probe
@@ -26,18 +23,6 @@ export const Navbar: React.FC<NavbarProps> = ({
       .then((res) => (res.ok ? setBackendHealthy(true) : setBackendHealthy(false)))
       .catch(() => setBackendHealthy(false));
   }, []);
-
-  const handleRoleSwitch = async (targetRole: UserRole) => {
-    setShowRoleMenu(false);
-    try {
-      await quickLogin(targetRole);
-      if (targetRole === 'admin') navigate('/admin/overview');
-      else if (targetRole === 'technician') navigate('/technician/dashboard');
-      else navigate('/customer/dashboard');
-    } catch (err) {
-      console.error('Role switch failed:', err);
-    }
-  };
 
   return (
     <header className="h-16 bg-surface border-b border-border px-4 sm:px-6 flex items-center justify-between sticky top-0 z-30 shadow-warmSm">
@@ -101,54 +86,6 @@ export const Navbar: React.FC<NavbarProps> = ({
         >
           {isDarkMode ? <SunIcon size={20} className="text-accent" /> : <MoonIcon size={20} />}
         </button>
-
-        {/* Fast Role Switcher */}
-        <div className="relative">
-          <button
-            onClick={() => setShowRoleMenu(!showRoleMenu)}
-            aria-label="Switch active role"
-            className="flex items-center gap-2 px-3 py-1.5 rounded-input border border-border bg-surface-alt text-xs font-semibold text-text hover:bg-border/60 transition min-h-[44px]"
-          >
-            <span className="text-text-muted hidden sm:inline">Role:</span>
-            <span className="capitalize text-primary font-bold">{user?.role || 'Guest'}</span>
-            <span className="text-text-muted text-[10px]">▼</span>
-          </button>
-
-          {showRoleMenu && (
-            <div className="absolute right-0 mt-2 w-52 bg-surface border border-border rounded-modal shadow-warmXl py-2 z-50 animate-slide-up">
-              <div className="px-3.5 py-1 text-[10px] font-bold text-text-muted uppercase tracking-wider">
-                Switch Role Context
-              </div>
-              <button
-                onClick={() => handleRoleSwitch('customer')}
-                className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between hover:bg-surface-alt ${
-                  role === 'customer' ? 'text-primary font-bold bg-primary-tint/30' : 'text-text'
-                }`}
-              >
-                <span>📦 Customer Portal</span>
-                {role === 'customer' && <span className="text-primary font-bold">✓</span>}
-              </button>
-              <button
-                onClick={() => handleRoleSwitch('technician')}
-                className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between hover:bg-surface-alt ${
-                  role === 'technician' ? 'text-primary font-bold bg-primary-tint/30' : 'text-text'
-                }`}
-              >
-                <span>👷 Technician App</span>
-                {role === 'technician' && <span className="text-primary font-bold">✓</span>}
-              </button>
-              <button
-                onClick={() => handleRoleSwitch('admin')}
-                className={`w-full text-left px-3.5 py-2 text-xs font-medium flex items-center justify-between hover:bg-surface-alt ${
-                  role === 'admin' ? 'text-primary font-bold bg-primary-tint/30' : 'text-text'
-                }`}
-              >
-                <span>⚡ Admin Console</span>
-                {role === 'admin' && <span className="text-primary font-bold">✓</span>}
-              </button>
-            </div>
-          )}
-        </div>
 
         {/* User Avatar & Logout */}
         <div className="flex items-center gap-2.5 pl-2 border-l border-border">

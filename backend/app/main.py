@@ -1,5 +1,6 @@
 """Main FastAPI application entry point."""
 
+import os
 import sys
 # Reconfigure stdout and stderr for UTF-8 with fallback to avoid charmap UnicodeEncodeErrors on Windows
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
@@ -69,8 +70,6 @@ app = FastAPI(
 
 # ── CORS Middleware Configuration ─────────────────────────────────────────────
 # Allowed origins for frontend clients (production Vercel & local development)
-import os as _os
-
 allowed_origins = [
     "https://dispatchgrid1.vercel.app",
     "http://localhost:3000",
@@ -80,20 +79,20 @@ allowed_origins = [
 ]
 
 # Merge any additional origins specified in the CORS_ORIGINS environment variable
-_env_cors = _os.getenv("CORS_ORIGINS", "")
-if _env_cors:
-    for _origin in _env_cors.split(","):
-        _cleaned = _origin.strip().rstrip("/")
-        if _cleaned and _cleaned not in allowed_origins:
-            allowed_origins.append(_cleaned)
+env_cors = os.getenv("CORS_ORIGINS", "")
+if env_cors:
+    for origin in env_cors.split(","):
+        cleaned = origin.strip().rstrip("/")
+        if cleaned and cleaned not in allowed_origins:
+            allowed_origins.append(cleaned)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_origin_regex=r"^https://.*\.vercel\.app$",
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "Accept", "Origin", "X-Requested-With", "*"],
     expose_headers=["*"],
     max_age=86400,
 )

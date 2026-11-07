@@ -1,5 +1,6 @@
 """Main FastAPI application entry point."""
 
+import os
 import sys
 # Reconfigure stdout and stderr for UTF-8 with fallback to avoid charmap UnicodeEncodeErrors on Windows
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
@@ -67,6 +68,35 @@ app = FastAPI(
     debug=settings.debug,
 )
 
+# ── CORS Middleware Configuration ─────────────────────────────────────────────
+# Allowed origins for frontend clients (production Vercel & local development)
+allowed_origins = [
+    "https://dispatchgrid1.vercel.app",
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:5173",
+]
+
+# Merge any additional origins specified in the CORS_ORIGINS environment variable
+env_cors = os.getenv("CORS_ORIGINS", "")
+if env_cors:
+    for origin in env_cors.split(","):
+        cleaned = origin.strip().rstrip("/")
+        if cleaned and cleaned not in allowed_origins:
+            allowed_origins.append(cleaned)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"^https://.*\.vercel\.app$",
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "Accept", "Origin", "X-Requested-With", "*"],
+    expose_headers=["*"],
+    max_age=86400,
+)
+
 
 @app.on_event("startup")
 def on_startup():
@@ -87,33 +117,6 @@ def on_shutdown():
         stop_scheduler()
     except Exception:
         pass
-
-# Configure CORS
-import os as _os
-
-_default_origins = [
-    "https://dispatchgrid1.vercel.app",
-    "http://localhost:3000",
-    "http://localhost:5173",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:5173",
-]
-
-_env_origins = _os.getenv("CORS_ORIGINS", "")
-if _env_origins:
-    for _o in _env_origins.split(","):
-        _cleaned = _o.strip().rstrip("/")
-        if _cleaned and _cleaned not in _default_origins:
-            _default_origins.append(_cleaned)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_default_origins,
-    allow_origin_regex=r"^https://.*\.vercel\.app$",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 
 @app.get("/")

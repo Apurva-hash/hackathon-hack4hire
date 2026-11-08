@@ -76,7 +76,7 @@ VALID_STATUS_TRANSITIONS: dict[str, str] = {
 
 
 def _sr_summary(sr: ServiceRequest) -> dict:
-    return {
+    d = {
         "id": sr.id,
         "status": sr.status.value if sr.status else None,
         "urgency": sr.urgency.value if sr.urgency else None,
@@ -92,6 +92,21 @@ def _sr_summary(sr: ServiceRequest) -> dict:
         "completed_at": sr.completed_at.isoformat() if sr.completed_at else None,
         "created_at": sr.created_at.isoformat() if sr.created_at else None,
     }
+    if sr.customer:
+        d["customer_name"] = sr.customer.name
+        d["customer_phone"] = sr.customer.phone
+    if hasattr(sr, "payments") and sr.payments:
+        latest_payment = sorted(sr.payments, key=lambda p: p.created_at or datetime.min, reverse=True)[0]
+        d["payment"] = {
+            "id": latest_payment.id,
+            "amount": latest_payment.amount,
+            "payment_method": latest_payment.payment_method.value if latest_payment.payment_method else None,
+            "status": latest_payment.status.value if latest_payment.status else None,
+            "transaction_id": latest_payment.transaction_id,
+            "technician_share": latest_payment.technician_share,
+            "admin_share": latest_payment.admin_share,
+        }
+    return d
 
 
 # ── Profile ───────────────────────────────────────────────────────────────────
@@ -201,13 +216,20 @@ def list_offers(
     db: Session = Depends(get_db),
 ):
     p = _get_profile(db, current_user)
+    if not p.is_online or p.is_suspended:
+        return {"count": 0, "offers": []}
+
     now = datetime.utcnow()
+    # Filter pending offers and ensure the underlying request has NOT been claimed yet
     offers = (
         db.query(JobOffer)
+        .join(ServiceRequest, JobOffer.service_request_id == ServiceRequest.id)
         .filter(
             JobOffer.technician_profile_id == p.id,
             JobOffer.status == OfferStatus.PENDING,
             JobOffer.expires_at > now,
+            ServiceRequest.status.in_([RequestStatus.REQUESTED, RequestStatus.MATCHING]),
+            ServiceRequest.assigned_technician_id.is_(None),
         )
         .all()
     )
@@ -216,7 +238,7 @@ def list_offers(
         sr = o.service_request
         result.append({
             "offer_id": o.id,
-            "expires_at": o.expires_at.isoformat(),
+            "expires_at": (o.expires_at.isoformat() + "Z") if o.expires_at else None,
             "attempt_number": o.attempt_number,
             "service_request": _sr_summary(sr) if sr else None,
         })
@@ -243,7 +265,7 @@ def accept_offer(
     try:
         result = handle_acceptance(db, offer_id)
     except ValueError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        raise HTTPException(status_code=409, detail=str(e))
     return result
 
 
@@ -338,14 +360,48 @@ def update_job_status(
         if sr.sla_resolution_deadline:
             sr.sla_resolution_met = now <= sr.sla_resolution_deadline
 
-        # Estimate price: duration_minutes × price_per_minute
-        if sr.category and sr.created_at:
-            duration = (now - sr.created_at).total_seconds() / 60.0
-            sr.estimated_price = round(duration * sr.category.price_per_minute, 2)
-            sr.estimated_duration_minutes = int(duration)
-            # Update tech earnings
-            p.total_jobs_completed = (p.total_jobs_completed or 0) + 1
-            p.total_earnings = (p.total_earnings or 0.0) + (sr.estimated_price or 0.0)
+        if not sr.estimated_price or sr.estimated_price <= 0:
+            if sr.category and sr.created_at:
+                duration = max(15.0, (now - sr.created_at).total_seconds() / 60.0)
+                sr.estimated_price = round(duration * sr.category.price_per_minute, 2)
+                sr.estimated_duration_minutes = int(duration)
+            else:
+                sr.estimated_price = 500.0
+
+        p.total_jobs_completed = (p.total_jobs_completed or 0) + 1
+
+        # Check or settle payment: if COD pending or no payment, create/mark as collected
+        from app.models import Payment, PaymentMethod, PaymentStatus
+        from app.services.payment_service import settle_revenue, generate_transaction_id
+
+        existing_pay = db.query(Payment).filter(Payment.service_request_id == sr.id).first()
+        if existing_pay:
+            if existing_pay.payment_method == PaymentMethod.CASH and existing_pay.status == PaymentStatus.PENDING:
+                existing_pay.status = PaymentStatus.COMPLETED
+                existing_pay.paid_at = now
+                existing_pay.transaction_id = generate_transaction_id(PaymentMethod.CASH)
+            if not existing_pay.technician_profile_id:
+                existing_pay.technician_profile_id = p.id
+        else:
+            amt = sr.estimated_price
+            new_pay = Payment(
+                service_request_id=sr.id,
+                customer_id=sr.customer_id,
+                technician_profile_id=p.id,
+                amount=amt,
+                admin_share=round(amt * 0.40, 2),
+                technician_share=round(amt * 0.60, 2),
+                payment_method=PaymentMethod.CASH,
+                status=PaymentStatus.COMPLETED,
+                transaction_id=generate_transaction_id(PaymentMethod.CASH),
+                paid_at=now,
+            )
+            db.add(new_pay)
+
+        db.commit()
+
+        # Idempotently settle 60% revenue share to technician
+        settle_revenue(db, sr)
 
         # Notify customer
         if sr.customer:
@@ -389,21 +445,59 @@ def get_earnings(
     db: Session = Depends(get_db),
 ):
     p = _get_profile(db, current_user)
+    from app.models import Payment, PaymentStatus
     completed_jobs = db.query(ServiceRequest).filter(
         ServiceRequest.assigned_technician_id == p.id,
         ServiceRequest.status == RequestStatus.COMPLETED,
-    ).all()
+    ).order_by(ServiceRequest.completed_at.desc()).all()
 
+    payout_history = []
+    total_tech_earnings = 0.0
+    total_admin_commission = 0.0
+    gross_volume = 0.0
     daily: dict[str, float] = {}
+
     for sr in completed_jobs:
-        if sr.completed_at and sr.estimated_price:
-            day = sr.completed_at.strftime("%Y-%m-%d")
-            daily[day] = round(daily.get(day, 0) + sr.estimated_price, 2)
+        pay = db.query(Payment).filter(Payment.service_request_id == sr.id).order_by(Payment.created_at.desc()).first()
+        amt = pay.amount if pay else (sr.estimated_price or 0.0)
+        t_share = pay.technician_share if pay else round(amt * 0.60, 2)
+        a_share = pay.admin_share if pay else round(amt * 0.40, 2)
+        p_status = pay.status.value if pay else "completed"
+        p_method = pay.payment_method.value if pay else "cash"
+        tx_id = pay.transaction_id if pay else f"SETTLED-{sr.id[:8].upper()}"
+
+        if p_status == "completed":
+            total_tech_earnings += t_share
+            total_admin_commission += a_share
+            gross_volume += amt
+
+            if sr.completed_at:
+                day = sr.completed_at.strftime("%Y-%m-%d")
+                daily[day] = round(daily.get(day, 0.0) + t_share, 2)
+
+        payout_history.append({
+            "booking_id": sr.id,
+            "service_name": sr.category.name if sr.category else "Service",
+            "customer_name": sr.customer.name if sr.customer else "Customer",
+            "completed_at": sr.completed_at.isoformat() if sr.completed_at else None,
+            "booking_amount": amt,
+            "technician_share": t_share,
+            "admin_share": a_share,
+            "payment_method": p_method,
+            "payment_status": p_status,
+            "transaction_id": tx_id,
+        })
+
+    p.total_earnings = round(total_tech_earnings, 2)
+    db.commit()
 
     return {
         "total_earnings": p.total_earnings,
-        "total_jobs_completed": p.total_jobs_completed,
+        "admin_commission_deducted": round(total_admin_commission, 2),
+        "gross_revenue": round(gross_volume, 2),
+        "total_jobs_completed": len(completed_jobs),
         "daily_breakdown": [{"date": k, "earnings": v} for k, v in sorted(daily.items(), reverse=True)],
+        "payout_history": payout_history,
     }
 
 

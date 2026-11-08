@@ -9,7 +9,7 @@ import { SunIcon, MoonIcon, WrenchIcon } from '../components/common/Icons';
 import { api } from '../services/apiClient';
 
 export const Login: React.FC = () => {
-  const { login, quickLogin, registerCustomer, registerTechnician, isDarkMode, toggleDarkMode } = useAuth();
+  const { login, registerCustomer, registerTechnician, isDarkMode, toggleDarkMode } = useAuth();
   const navigate = useNavigate();
 
   const [mode, setMode] = useState<'login' | 'registerCustomer' | 'registerTechnician'>('login');
@@ -78,20 +78,7 @@ export const Login: React.FC = () => {
     }
   };
 
-  const handleQuickLogin = async (role: UserRole) => {
-    setErrorMsg(null);
-    setLoading(true);
-    try {
-      const user = await quickLogin(role);
-      if (user.role === 'admin') navigate('/admin/overview');
-      else if (user.role === 'technician') navigate('/technician/dashboard');
-      else navigate('/customer/dashboard');
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Quick login failed');
-    } finally {
-      setLoading(false);
-    }
-  };
+
 
   return (
     <div className="min-h-screen bg-bg flex flex-col justify-center items-center p-4 relative selection:bg-primary-tint">
@@ -168,7 +155,7 @@ export const Login: React.FC = () => {
         {mode === 'login' && (
           <div className="mb-5">
             <label className="block text-[11px] font-bold text-text-muted uppercase tracking-wider mb-2">
-              Select Demo Persona
+              Select Role
             </label>
             <div className="grid grid-cols-3 gap-2 p-1 bg-surface-alt rounded-input border border-border">
               {(['customer', 'technician', 'admin'] as UserRole[]).map((r) => (
@@ -303,40 +290,7 @@ export const Login: React.FC = () => {
           </Button>
         </form>
 
-        {/* 1-Click Instant Demo Logins */}
-        {mode === 'login' && (
-          <div className="mt-6 pt-5 border-t border-border">
-            <div className="text-[11px] font-bold text-text-muted uppercase tracking-wider mb-2.5 text-center">
-              1-Click Demo Logins
-            </div>
-            <div className="grid grid-cols-3 gap-2">
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('customer')}
-                className="p-2.5 border border-border bg-surface-alt hover:bg-border/60 text-text rounded-card text-left transition text-xs shadow-warmSm min-h-[44px]"
-              >
-                <div className="font-bold text-primary">📦 Customer</div>
-                <div className="text-[10px] text-text-muted">Alice Sharma</div>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('technician')}
-                className="p-2.5 border border-border bg-surface-alt hover:bg-border/60 text-text rounded-card text-left transition text-xs shadow-warmSm min-h-[44px]"
-              >
-                <div className="font-bold text-status-progress">👷 Technician</div>
-                <div className="text-[10px] text-text-muted">Raj Kumar (AC)</div>
-              </button>
-              <button
-                type="button"
-                onClick={() => handleQuickLogin('admin')}
-                className="p-2.5 border border-border bg-surface-alt hover:bg-border/60 text-text rounded-card text-left transition text-xs shadow-warmSm min-h-[44px]"
-              >
-                <div className="font-bold text-accent">⚡ Admin</div>
-                <div className="text-[10px] text-text-muted">Full Console</div>
-              </button>
-            </div>
-          </div>
-        )}
+
       </div>
 
       {/* Forgot Password Modal */}

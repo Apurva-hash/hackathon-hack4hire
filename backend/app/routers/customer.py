@@ -26,6 +26,22 @@ from app.services.matching_service import dispatch
 from app.services.sla_service import compute_deadlines
 from app.services.notification_service import notify, mark_read
 from app.utils.geo import haversine_km, eta_minutes
+def format_rounded_eta(minutes: int) -> str:
+    if minutes <= 20:
+        return "15 mins"
+    elif minutes <= 35:
+        return "30 mins"
+    elif minutes <= 50:
+        return "45 mins"
+    elif minutes <= 70:
+        return "1 hour"
+    elif minutes <= 85:
+        return "1 hr 15 mins"
+    elif minutes <= 105:
+        return "1 hr 30 mins"
+    else:
+        return f"{max(2, round(minutes / 60))} hours"
+
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Customer"])
@@ -60,6 +76,11 @@ class BookingCreate(BaseModel):
 class RatingCreate(BaseModel):
     score: float = Field(..., ge=1.0, le=5.0)
     feedback_text: Optional[str] = None
+
+
+class MakePaymentBody(BaseModel):
+    payment_method: str  # cash | gpay | phonepe
+    simulate_status: Optional[str] = "success"  # success | failed
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -102,6 +123,18 @@ def _sr_dict(sr: ServiceRequest, include_tech: bool = False) -> dict:
             "phone": t.phone,
             "avg_rating": t.avg_rating,
             "certification_level": t.certification_level,
+        }
+    if hasattr(sr, "payments") and sr.payments:
+        latest_payment = sorted(sr.payments, key=lambda p: p.created_at or datetime.min, reverse=True)[0]
+        d["payment"] = {
+            "id": latest_payment.id,
+            "amount": latest_payment.amount,
+            "payment_method": latest_payment.payment_method.value if latest_payment.payment_method else None,
+            "status": latest_payment.status.value if latest_payment.status else None,
+            "transaction_id": latest_payment.transaction_id,
+            "admin_share": latest_payment.admin_share,
+            "technician_share": latest_payment.technician_share,
+            "paid_at": latest_payment.paid_at.isoformat() if latest_payment.paid_at else None,
         }
     return d
 
@@ -251,10 +284,13 @@ def nearby_technicians(
         results.append({
             "id": t.id,
             "name": t.name,
+            "lat": t.lat,
+            "lng": t.lng,
             "avg_rating": t.avg_rating,
             "certification_level": t.certification_level,
             "distance_km": round(dist, 2),
             "eta_minutes": eta,
+            "eta_display": format_rounded_eta(eta),
         })
 
     results.sort(key=lambda x: x["distance_km"])
@@ -327,6 +363,11 @@ def create_booking(
         preferred_time_end=body.preferred_time_end,
         status=RequestStatus.REQUESTED,
         offer_attempt=0,
+        estimated_price=round(
+            ((cat.price_per_minute * 45 * 10) if cat and cat.price_per_minute else 200.0) *
+            (1.75 if body.urgency == RequestUrgency.CRITICAL else 1.35 if body.urgency == RequestUrgency.HIGH else 1.0),
+            2
+        ),
         created_at=datetime.utcnow(),
     )
     db.add(sr)
@@ -508,14 +549,25 @@ def technician_location(
     if not loc:
         raise HTTPException(status_code=404, detail="Technician location not available")
 
+    # Privacy: only share location if technician is actively online & job in progress/en route
+    tech_prof = sr.assigned_technician
+    if tech_prof and not tech_prof.is_online:
+        return {
+            "technician_id": sr.assigned_technician_id,
+            "status": "offline",
+            "message": "Technician location tracking stopped (offline)",
+        }
+
     dist = haversine_km(sr.lat, sr.lng, loc.lat, loc.lng)
+    eta = eta_minutes(dist)
     return {
         "technician_id": sr.assigned_technician_id,
         "lat": loc.lat,
         "lng": loc.lng,
         "updated_at": loc.updated_at.isoformat() if loc.updated_at else None,
         "distance_to_job_km": round(dist, 2),
-        "eta_minutes": eta_minutes(dist),
+        "eta_minutes": eta,
+        "eta_display": format_rounded_eta(eta),
     }
 
 
@@ -564,3 +616,68 @@ def mark_notification_read(
         raise HTTPException(status_code=404, detail=str(e))
     return {"message": "Marked as read"}
 
+
+
+# ── Payments ──────────────────────────────────────────────────────────────────
+
+@router.post("/bookings/{booking_id}/pay")
+def pay_booking(
+    booking_id: str,
+    body: MakePaymentBody,
+    current_user: User = Depends(get_current_customer),
+    db: Session = Depends(get_db),
+):
+    c = _get_customer(db, current_user)
+    sr = db.query(ServiceRequest).filter(
+        ServiceRequest.id == booking_id,
+        ServiceRequest.customer_id == c.id,
+    ).first()
+    if not sr:
+        raise HTTPException(status_code=404, detail="Booking not found")
+
+    try:
+        from app.services.payment_service import process_payment
+        res = process_payment(db, booking_id, c.id, body.payment_method, body.simulate_status or "success")
+        return res
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/bookings/{booking_id}/payment")
+def get_booking_payment(
+    booking_id: str,
+    current_user: User = Depends(get_current_customer),
+    db: Session = Depends(get_db),
+):
+    c = _get_customer(db, current_user)
+    sr = db.query(ServiceRequest).filter(
+        ServiceRequest.id == booking_id,
+        ServiceRequest.customer_id == c.id,
+    ).first()
+    if not sr:
+        raise HTTPException(status_code=404, detail="Booking not found")
+
+    from app.models import Payment
+    payment = (
+        db.query(Payment)
+        .filter(Payment.service_request_id == sr.id)
+        .order_by(Payment.created_at.desc())
+        .first()
+    )
+    if not payment:
+        return {"has_payment": False, "payment": None}
+    return {
+        "has_payment": True,
+        "payment": {
+            "id": payment.id,
+            "amount": payment.amount,
+            "payment_method": payment.payment_method.value,
+            "status": payment.status.value,
+            "transaction_id": payment.transaction_id,
+            "admin_share": payment.admin_share,
+            "technician_share": payment.technician_share,
+            "failure_reason": payment.failure_reason,
+            "paid_at": payment.paid_at.isoformat() if payment.paid_at else None,
+            "created_at": payment.created_at.isoformat() if payment.created_at else None,
+        }
+    }

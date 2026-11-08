@@ -25,11 +25,7 @@ interface AuthContextType {
   toggleDarkMode: () => void;
 }
 
-const DEMO_CREDENTIALS: Record<UserRole, { email: string; pass: string }> = {
-  admin: { email: 'admin@dispatchgrid.dev', pass: 'Admin@1234' },
-  customer: { email: 'alice@example.com', pass: 'Customer@1234' },
-  technician: { email: 'raj.tech@example.com', pass: 'Tech@1234' },
-};
+
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
@@ -151,9 +147,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return { user: authUser, message: data.message };
   };
 
-  const quickLogin = async (targetRole: UserRole): Promise<User> => {
-    const creds = DEMO_CREDENTIALS[targetRole];
-    return await login(creds.email, creds.pass);
+  const quickLogin = async (_targetRole: UserRole): Promise<User> => {
+    throw new Error('Demo login is disabled');
   };
 
   const logout = () => {

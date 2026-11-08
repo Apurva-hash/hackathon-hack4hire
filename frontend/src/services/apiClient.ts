@@ -239,6 +239,16 @@ export const api = {
       const res = await apiClient.patch(`/api/customer/notifications/${id}/read`);
       return res.data;
     },
+
+    payBooking: async (bookingId: string, payload: { payment_method: string; simulate_status?: string }) => {
+      const res = await apiClient.post(`/api/customer/bookings/${bookingId}/pay`, payload);
+      return res.data;
+    },
+
+    getBookingPayment: async (bookingId: string) => {
+      const res = await apiClient.get(`/api/customer/bookings/${bookingId}/payment`);
+      return res.data;
+    },
   },
 
   // ── Technician APIs ────────────────────────────────────────────────────────
@@ -348,6 +358,11 @@ export const api = {
 
     getRevenueStats: async (params?: { date_from?: string; date_to?: string }): Promise<RevenueStats> => {
       const res = await apiClient.get<RevenueStats>('/api/admin/dashboard/revenue', { params });
+      return res.data;
+    },
+
+    getPayments: async (params?: { status?: string; payment_method?: string; limit?: number; offset?: number }) => {
+      const res = await apiClient.get('/api/admin/payments', { params });
       return res.data;
     },
 

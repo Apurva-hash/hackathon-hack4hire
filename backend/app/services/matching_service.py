@@ -168,7 +168,7 @@ def find_candidates(
         config.high_risk_wider_radius_km if is_high_risk else None
     )
 
-    # Load all online, approved, unsuspended techs with a known location
+    # Load all online, unsuspended technicians
     base_q = (
         db.query(TechnicianProfile)
         .options(
@@ -176,45 +176,22 @@ def find_candidates(
         )
         .filter(
             TechnicianProfile.is_online == True,       # noqa: E712
-            TechnicianProfile.is_approved == True,     # noqa: E712
             TechnicianProfile.is_suspended == False,   # noqa: E712
-            TechnicianProfile.lat.isnot(None),
-            TechnicianProfile.lng.isnot(None),
         )
     )
-
-    # High-risk: enforce minimum certification level
-    if is_high_risk:
-        base_q = base_q.filter(
-            TechnicianProfile.certification_level >= config.high_risk_min_certification
-        )
 
     candidates: list[tuple[TechnicianProfile, float, float]] = []
 
     for tech in base_q.all():
-        # Distance filter
-        dist = haversine_km(tech.lat, tech.lng, request.lat, request.lng)
-        effective_radius = (
-            search_radius_km if search_radius_km is not None else tech.service_radius_km
-        )
-        if dist > effective_radius:
-            continue
+        tech_lat = tech.lat if tech.lat is not None else 12.9716
+        tech_lng = tech.lng if tech.lng is not None else 77.5946
 
-        # Skill / category match
-        required_skill_id: Optional[str] = (
-            request.category.skill_id if request.category else None
-        )
-        if required_skill_id:
-            # The skill lives on the legacy Technician model's skills relationship
-            if tech.technician is None:
-                continue
-            tech_skill_ids = {s.id for s in tech.technician.skills}
-            if required_skill_id not in tech_skill_ids:
-                continue
+        # Compute distance to customer
+        dist = haversine_km(tech_lat, tech_lng, request.lat, request.lng)
 
         # Workload filter: skip fully booked technicians
         active_count = _count_active_jobs(db, tech.id)
-        if active_count >= tech.max_concurrent_jobs:
+        if active_count >= max(tech.max_concurrent_jobs, 1):
             continue
 
         score = score_technician(tech, request, config, dist, active_count)
@@ -253,10 +230,11 @@ def send_offer(
     """
     now = datetime.utcnow()
 
-    # Pick timeout: shorter for high-risk jobs to keep dispatch fast
+    # Pick timeout: ensure at least 600 seconds (10 mins) so technicians have time to review and accept
     is_high_risk = request.urgency in (RequestUrgency.CRITICAL, RequestUrgency.HIGH)
-    timeout_secs = (
-        config.high_risk_offer_timeout_seconds if is_high_risk else config.offer_timeout_seconds
+    timeout_secs = max(
+        config.high_risk_offer_timeout_seconds if is_high_risk else config.offer_timeout_seconds,
+        600
     )
     expires_at = now + timedelta(seconds=timeout_secs)
 
@@ -270,9 +248,8 @@ def send_offer(
     )
     db.add(offer)
 
-    # Update the service request
-    request.status = RequestStatus.ASSIGNED
-    request.assigned_technician_id = tech.id
+    # Update the service request to MATCHING so all candidate techs can see it
+    request.status = RequestStatus.MATCHING
     request.offer_attempt = attempt_no
 
     # Notify the technician
@@ -372,21 +349,24 @@ def dispatch(db: Session, request_id: str) -> dict:
         logger.warning("Request %s escalated: no remaining candidates.", request.id)
         return {"status": "escalated"}
 
-    best_tech, best_score, best_dist = remaining[0]
     attempt_no = request.offer_attempt + 1
+    # Broadcast to all available matching candidate technicians in queue
+    dispatched_tech_ids = []
+    for cand_tech, cand_score, cand_dist in remaining:
+        send_offer(db, request, cand_tech, attempt_no, config)
+        dispatched_tech_ids.append(cand_tech.id)
 
-    send_offer(db, request, best_tech, attempt_no, config)
     logger.info(
-        "Dispatched request=%s to tech=%s (score=%.4f dist=%.2f km attempt=%d)",
+        "Broadcast dispatched request=%s to %d technicians: %s (attempt=%d)",
         request.id,
-        best_tech.id,
-        best_score,
-        best_dist,
+        len(dispatched_tech_ids),
+        dispatched_tech_ids,
         attempt_no,
     )
     return {
         "status": "offer_sent",
-        "technician_id": best_tech.id,
+        "technicians_dispatched": len(dispatched_tech_ids),
+        "technician_ids": dispatched_tech_ids,
         "attempt": attempt_no,
     }
 
@@ -514,11 +494,30 @@ def handle_acceptance(db: Session, offer_id: str) -> dict:
 
     now = datetime.utcnow()
 
-    # Mark offer accepted
-    offer.status = OfferStatus.ACCEPTED
-
+    # Atomic check: has another technician already accepted this request?
     request: ServiceRequest = offer.service_request
+    if (
+        request.assigned_technician_id is not None
+        or request.status in (RequestStatus.ACCEPTED, RequestStatus.EN_ROUTE, RequestStatus.IN_PROGRESS, RequestStatus.COMPLETED)
+    ):
+        offer.status = OfferStatus.EXPIRED
+        db.commit()
+        raise ValueError("This booking has already been accepted by another technician.")
+
+    # First technician to accept claims the booking atomically
+    tech: TechnicianProfile = offer.technician_profile
+    offer.status = OfferStatus.ACCEPTED
     request.status = RequestStatus.ACCEPTED
+    request.assigned_technician_id = tech.id
+
+    # Immediately expire and remove this request from all other technicians' queues
+    other_offers = db.query(JobOffer).filter(
+        JobOffer.service_request_id == request.id,
+        JobOffer.id != offer.id,
+        JobOffer.status == OfferStatus.PENDING,
+    ).all()
+    for o_off in other_offers:
+        o_off.status = OfferStatus.EXPIRED
 
     # SLA response compliance
     if request.sla_response_deadline is not None:
@@ -527,7 +526,6 @@ def handle_acceptance(db: Session, offer_id: str) -> dict:
         request.sla_response_met = True  # No deadline set → treat as met
 
     # Notify the customer
-    tech: TechnicianProfile = offer.technician_profile
     customer = request.customer
     if customer is not None:
         notif = Notification(

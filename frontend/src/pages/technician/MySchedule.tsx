@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../../services/apiClient';
 import {
   TechnicianProfile,
@@ -81,13 +81,23 @@ export const MySchedule: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
-  // Countdown timer for pending offer
+  const prevOffersCountRef = useRef<number>(0);
+
+  // Countdown timer for pending offer & alert toast
   useEffect(() => {
     let timer: any;
     if (offers.length > 0) {
+      if (offers.length > prevOffersCountRef.current) {
+        success('New Job Request!', 'A new booking is available in your queue. Accept it now!');
+      }
+      prevOffersCountRef.current = offers.length;
+
       const activeOffer = offers[0];
-      const expiryTime = new Date(activeOffer.expires_at).getTime();
-      const remainingSecs = Math.max(0, Math.floor((expiryTime - Date.now()) / 1000));
+      const expiryStr = activeOffer.expires_at || '';
+      const normalizedExpiry = expiryStr.endsWith('Z') || expiryStr.includes('+') ? expiryStr : expiryStr + 'Z';
+      const expiryTime = new Date(normalizedExpiry).getTime();
+      const diff = Math.floor((expiryTime - Date.now()) / 1000);
+      const remainingSecs = isNaN(diff) || diff <= 0 ? 300 : diff;
       setOfferCountdown(remainingSecs);
 
       timer = setInterval(() => {
@@ -100,6 +110,8 @@ export const MySchedule: React.FC = () => {
           return prev - 1;
         });
       }, 1000);
+    } else {
+      prevOffersCountRef.current = 0;
     }
     return () => clearInterval(timer);
   }, [offers]);
@@ -203,6 +215,32 @@ export const MySchedule: React.FC = () => {
       toastError('Failed to add note', err.message);
     }
   };
+
+  // GPS auto-broadcast: share live location when online
+  useEffect(() => {
+    if (!profile?.is_online) return;
+
+    // Push initial location immediately, then watch for changes
+    let watchId: number | null = null;
+
+    const pushLocation = (pos: GeolocationPosition) => {
+      api.technician
+        .updateLocation(pos.coords.latitude, pos.coords.longitude)
+        .catch((err) => console.warn('GPS push failed:', err));
+    };
+
+    if (navigator.geolocation) {
+      watchId = navigator.geolocation.watchPosition(pushLocation, (err) =>
+        console.warn('GPS watch error:', err),
+        { enableHighAccuracy: true, maximumAge: 15000, timeout: 10000 }
+      );
+    }
+
+    return () => {
+      if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    };
+  }, [profile?.is_online]);
+
 
   const currentJob = activeJobs.length > 0 ? activeJobs[0] : null;
   const currentOffer = offers.length > 0 ? offers[0] : null;
@@ -388,7 +426,9 @@ export const MySchedule: React.FC = () => {
           {/* Navigation & Customer Contacts */}
           <div className="p-4 rounded-card bg-surface-alt border border-border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
             <div>
-              <div className="text-xs font-bold text-text">Customer Residence</div>
+              <div className="text-xs font-bold text-text">
+                Customer: {currentJob.customer_name || 'Customer Residence'}
+              </div>
               <div className="text-xs text-text-muted mt-0.5">{currentJob.address}</div>
               {currentJob.description && (
                 <div className="text-xs text-text font-medium mt-1 italic">
@@ -408,11 +448,11 @@ export const MySchedule: React.FC = () => {
                 <span>Navigate</span>
               </a>
               <a
-                href="tel:+919876543210"
+                href={`tel:${currentJob.customer_phone || '+919876543210'}`}
                 className="flex-1 sm:flex-none inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-input bg-surface border border-border text-xs font-bold text-text hover:bg-surface-alt transition shadow-warmSm min-h-[44px]"
               >
                 <PhoneIcon size={16} />
-                <span>Call</span>
+                <span>Call {currentJob.customer_phone ? '' : ''}</span>
               </a>
             </div>
           </div>

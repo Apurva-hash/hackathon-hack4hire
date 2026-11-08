@@ -33,7 +33,7 @@ export const DashboardLayout: React.FC = () => {
 
   useEffect(() => {
     fetchNotifications();
-    const interval = setInterval(fetchNotifications, 10000); // 10s poll for in-app alerts
+    const interval = setInterval(fetchNotifications, 4000); // 4s poll for in-app alerts
     return () => clearInterval(interval);
   }, [role]);
 

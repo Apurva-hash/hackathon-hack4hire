@@ -23,6 +23,7 @@ from app.models.service_request import (
 )
 from app.models.rating import Rating, AuditLog
 from app.models.notification import Notification, NotificationType
+from app.models.payment import Payment, PaymentMethod, PaymentStatus
 
 __all__ = [
     # Base
@@ -58,4 +59,7 @@ __all__ = [
 
     # Notifications
     "Notification", "NotificationType",
+
+    # Payments & Revenue
+    "Payment", "PaymentMethod", "PaymentStatus",
 ]

@@ -42,7 +42,7 @@ Base.metadata.create_all(bind=engine)
 # Fixed deterministic IDs matching frontend DEFAULT_SERVICE_CATEGORIES in BookService.tsx
 CATEGORIES_DATA = [
     {
-        "id": "b2929618-c561-4442-a767-ba2cb74b02c2",
+        "id": "8aef2850-d61f-404a-9574-91c6615312c2",
         "name": "AC Service",
         "description": "Air conditioner installation, repair, and maintenance",
         "icon": "❄️",
@@ -68,7 +68,7 @@ CATEGORIES_DATA = [
     {
         "id": "24fd4b95-07ed-443e-a1ca-e64a6fd9b7f2",
         "name": "Washing Machine",
-        "description": "Washing machine repair and servicing",
+        "description": "Washing machine repair, drum fixing, and servicing",
         "icon": "🫧",
         "price_per_minute": 2.0,
         "required_certification_level": 1,
@@ -76,15 +76,55 @@ CATEGORIES_DATA = [
     {
         "id": "5ae2629c-e467-477c-9608-c6c330e72d35",
         "name": "Refrigerator",
-        "description": "Refrigerator cooling, compressor, and general repair",
+        "description": "Refrigerator cooling, compressor, gas charging, and repair",
         "icon": "🧊",
         "price_per_minute": 2.5,
         "required_certification_level": 2,
     },
     {
+        "id": "7d3a2b10-9f8e-4a6c-b5d1-1a2b3c4d5e6f",
+        "name": "Microwave Repair",
+        "description": "Microwave oven magnetron, heating, and panel repairs",
+        "icon": "🍿",
+        "price_per_minute": 2.2,
+        "required_certification_level": 1,
+    },
+    {
+        "id": "8e4b3c21-0a9f-5b7d-c6e2-2b3c4d5e6f7a",
+        "name": "TV & Audio Repair",
+        "description": "Smart LED/OLED TV display, sound, and board diagnostics",
+        "icon": "📺",
+        "price_per_minute": 2.8,
+        "required_certification_level": 2,
+    },
+    {
+        "id": "9f5c4d32-1ba0-6c8e-d7f3-3c4d5e6f7a8b",
+        "name": "RO Water Purifier",
+        "description": "RO membrane replacement, filter cleaning, and TDS tuning",
+        "icon": "💧",
+        "price_per_minute": 2.0,
+        "required_certification_level": 1,
+    },
+    {
+        "id": "a06d5e43-2cb1-7d9f-e8a4-4d5e6f7a8b9c",
+        "name": "Geyser / Water Heater",
+        "description": "Electric/gas water heater coil, thermostat, and pipe repair",
+        "icon": "🚿",
+        "price_per_minute": 2.5,
+        "required_certification_level": 2,
+    },
+    {
+        "id": "b17e6f54-3dc2-8ea0-f9b5-5e6f7a8b9c0d",
+        "name": "Chimney & Hob Repair",
+        "description": "Kitchen chimney deep cleaning, motor repair, and hob fixing",
+        "icon": "🍳",
+        "price_per_minute": 2.2,
+        "required_certification_level": 2,
+    },
+    {
         "id": "c5ad066c-fc2a-4720-85c8-8fb603d7b5ce",
         "name": "Painting",
-        "description": "Interior and exterior wall painting",
+        "description": "Interior and exterior wall painting, waterproof coating",
         "icon": "🎨",
         "price_per_minute": 1.5,
         "required_certification_level": 1,
@@ -92,7 +132,7 @@ CATEGORIES_DATA = [
     {
         "id": "e9510ae6-718f-48ab-b7c5-68c145052307",
         "name": "Carpentry",
-        "description": "Furniture assembly, repair, and woodwork",
+        "description": "Furniture assembly, lock repair, and custom woodwork",
         "icon": "🪑",
         "price_per_minute": 2.0,
         "required_certification_level": 1,
@@ -178,8 +218,8 @@ TEST_CREDENTIALS = """
 ║                  DispatchGrid v2 — Test Credentials              ║
 ╠══════════════════════════════════════════════════════════════════╣
 ║  ADMIN                                                           ║
-║    email:    admin@dispatchgrid.dev                              ║
-║    password: Admin@1234                                          ║
+║    email:    admin11@gmail.com                              ║
+║    password: dpgadmin                                          ║
 ╠══════════════════════════════════════════════════════════════════╣
 ║  CUSTOMERS                                                       ║
 ║    alice@example.com   / Customer@1234                           ║
@@ -237,19 +277,37 @@ def seed():
         # ── Service Categories ─────────────────────────────────────────────────
         seed_categories(db)
 
-        # ── Admin user ────────────────────────────────────────────────────────
-        existing_admin = db.query(User).filter(User.email == "admin@dispatchgrid.dev").first()
-        if not existing_admin:
+        # ── Admin user (Exactly ONE Admin: admin11@gmail.com) ──────────────────
+        from app.models.rating import AuditLog
+        from app.models.notification import Notification
+
+        admin_email = "admin11@gmail.com"
+        admin_user = db.query(User).filter(User.email == admin_email).first()
+        if not admin_user:
             admin_user = User(
                 id=generate_uuid(),
-                email="admin@dispatchgrid.dev",
-                hashed_password=hash_password("Admin@1234"),
+                email=admin_email,
+                hashed_password=hash_password("dpgadmin"),
                 role=UserRole.ADMIN,
                 is_active=True,
             )
             db.add(admin_user)
             db.flush()
-            print("  [OK] Admin user")
+            print("  [OK] Admin user admin11@gmail.com created")
+        else:
+            admin_user.role = UserRole.ADMIN
+            admin_user.hashed_password = hash_password("dpgadmin")
+            admin_user.is_active = True
+            db.flush()
+            print("  [OK] Admin user admin11@gmail.com updated")
+
+        # Reassign any audit logs or notifications from other admins, then remove other admin accounts
+        other_admins = db.query(User).filter(User.role == UserRole.ADMIN, User.id != admin_user.id).all()
+        for old_a in other_admins:
+            db.query(AuditLog).filter(AuditLog.admin_user_id == old_a.id).update({"admin_user_id": admin_user.id})
+            db.query(Notification).filter(Notification.user_id == old_a.id).update({"user_id": admin_user.id})
+            db.delete(old_a)
+        db.flush()
 
         # ── Customer users ────────────────────────────────────────────────────
         customers_data = [

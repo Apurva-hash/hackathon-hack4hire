@@ -10,6 +10,7 @@ import { Badge } from '../../components/common/Badge';
 import { Skeleton } from '../../components/common/Skeleton';
 import { useToast } from '../../components/common/Toast';
 import { StarIcon, ClockIcon, NavigationIcon } from '../../components/common/Icons';
+import { DemoPaymentModal } from '../../components/common/DemoPaymentModal';
 
 // ── Default categories matching DispatchGrid v2 seed data ─────────────────────
 // These are the original platform categories. They display immediately while the
@@ -17,7 +18,7 @@ import { StarIcon, ClockIcon, NavigationIcon } from '../../components/common/Ico
 // an empty list (e.g. on a fresh Render deploy where the SQLite DB is unseeded).
 const DEFAULT_SERVICE_CATEGORIES: ServiceCategory[] = [
   {
-    id: 'b2929618-c561-4442-a767-ba2cb74b02c2',
+    id: '8aef2850-d61f-404a-9574-91c6615312c2',
     name: 'AC Service',
     description: 'Air conditioner installation, repair, and maintenance',
     icon: '❄️',
@@ -43,7 +44,7 @@ const DEFAULT_SERVICE_CATEGORIES: ServiceCategory[] = [
   {
     id: '24fd4b95-07ed-443e-a1ca-e64a6fd9b7f2',
     name: 'Washing Machine',
-    description: 'Washing machine repair and servicing',
+    description: 'Washing machine repair, drum fixing, and servicing',
     icon: '🫧',
     price_per_minute: 2.0,
     required_certification_level: 1,
@@ -54,6 +55,46 @@ const DEFAULT_SERVICE_CATEGORIES: ServiceCategory[] = [
     description: 'Refrigerator cooling, compressor, and general repair',
     icon: '🧊',
     price_per_minute: 2.5,
+    required_certification_level: 2,
+  },
+  {
+    id: '7d3a2b10-9f8e-4a6c-b5d1-1a2b3c4d5e6f',
+    name: 'Microwave Repair',
+    description: 'Microwave oven magnetron, heating, and panel repairs',
+    icon: '🍿',
+    price_per_minute: 2.2,
+    required_certification_level: 1,
+  },
+  {
+    id: '8e4b3c21-0a9f-5b7d-c6e2-2b3c4d5e6f7a',
+    name: 'TV & Audio Repair',
+    description: 'Smart LED/OLED TV display, sound, and board diagnostics',
+    icon: '📺',
+    price_per_minute: 2.8,
+    required_certification_level: 2,
+  },
+  {
+    id: '9f5c4d32-1ba0-6c8e-d7f3-3c4d5e6f7a8b',
+    name: 'RO Water Purifier',
+    description: 'RO membrane replacement, filter cleaning, and TDS tuning',
+    icon: '💧',
+    price_per_minute: 2.0,
+    required_certification_level: 1,
+  },
+  {
+    id: 'a06d5e43-2cb1-7d9f-e8a4-4d5e6f7a8b9c',
+    name: 'Geyser / Water Heater',
+    description: 'Electric/gas water heater coil, thermostat, and pipe repair',
+    icon: '🚿',
+    price_per_minute: 2.5,
+    required_certification_level: 2,
+  },
+  {
+    id: 'b17e6f54-3dc2-8ea0-f9b5-5e6f7a8b9c0d',
+    name: 'Chimney & Hob Repair',
+    description: 'Kitchen chimney deep cleaning, motor repair, and hob fixing',
+    icon: '🍳',
+    price_per_minute: 2.2,
     required_certification_level: 2,
   },
   {
@@ -73,6 +114,19 @@ const DEFAULT_SERVICE_CATEGORIES: ServiceCategory[] = [
     required_certification_level: 1,
   },
 ];
+
+// ── Rounded ETA Formatter ──────────────────────────────────────────────────
+export const formatRoundedEta = (minutes?: number): string => {
+  if (minutes === undefined || minutes === null || minutes <= 0) return 'Immediate dispatch';
+  if (minutes <= 20) return '15 mins';
+  if (minutes <= 35) return '30 mins';
+  if (minutes <= 50) return '45 mins';
+  if (minutes <= 70) return '1 hour';
+  if (minutes <= 85) return '1 hr 15 mins';
+  if (minutes <= 105) return '1 hr 30 mins';
+  return `${Math.round(minutes / 60)} hours`;
+};
+
 
 export const BookService: React.FC = () => {
   const navigate = useNavigate();
@@ -97,6 +151,8 @@ export const BookService: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [matchingBookingId, setMatchingBookingId] = useState<string | null>(null);
   const [matchingSeconds, setMatchingSeconds] = useState(0);
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [paymentData, setPaymentData] = useState<any>(null);
 
   // Load Categories on mount — syncs with backend; falls back to DEFAULT_SERVICE_CATEGORIES
   useEffect(() => {
@@ -171,11 +227,13 @@ export const BookService: React.FC = () => {
 
   const selectedCategory = categories.find((c) => c.id === selectedCatId);
 
-  // Price estimate calculation: 45 min baseline duration × category rate
-  const estimatedDuration = urgency === 'critical' ? 30 : 45;
-  const priceEstimate = selectedCategory
-    ? Math.round(estimatedDuration * selectedCategory.price_per_minute * 10)
-    : 150;
+  // Dynamic pricing calculation: Normal < Urgent < Emergency
+  const estimatedDuration = urgency === 'critical' ? 25 : urgency === 'high' ? 35 : 45;
+  const baseServicePrice = selectedCategory
+    ? Math.round(45 * selectedCategory.price_per_minute * 10)
+    : 200;
+  const urgencyMultiplier = urgency === 'critical' ? 1.75 : urgency === 'high' ? 1.35 : 1.0;
+  const priceEstimate = Math.round(baseServicePrice * urgencyMultiplier);
 
   // Closest technician estimate
   const closestTech = nearbyTechs.length > 0 ? nearbyTechs[0] : null;
@@ -198,8 +256,8 @@ export const BookService: React.FC = () => {
         urgency,
       });
 
-      success('Booking Created!', 'DispatchGrid is finding the best technician...');
       setMatchingBookingId(res.booking_id);
+      setPaymentModalOpen(true);
     } catch (err: any) {
       toastError('Booking Failed', err.message);
     } finally {
@@ -224,10 +282,10 @@ export const BookService: React.FC = () => {
   const techMarkers: MapMarker[] = nearbyTechs.map((t, idx) => ({
     id: t.id,
     title: t.name,
-    subtitle: `${t.distance_km} km • ~${t.eta_minutes} min`,
+    subtitle: `${t.distance_km} km • ETA: ${formatRoundedEta(t.eta_minutes)}`,
     type: 'technician',
-    lat: customerLat + (idx === 0 ? 0.015 : idx === 1 ? -0.012 : 0.02) * (idx % 2 === 0 ? 1 : -1),
-    lng: customerLng + (idx === 0 ? -0.018 : idx === 1 ? 0.014 : -0.015) * (idx % 2 === 0 ? -1 : 1),
+    lat: (t as any).lat || (customerLat + (idx === 0 ? 0.015 : idx === 1 ? -0.012 : 0.02) * (idx % 2 === 0 ? 1 : -1)),
+    lng: (t as any).lng || (customerLng + (idx === 0 ? -0.018 : idx === 1 ? 0.014 : -0.015) * (idx % 2 === 0 ? -1 : 1)),
     eta_minutes: t.eta_minutes,
     distance_km: t.distance_km,
     rating: t.avg_rating,
@@ -262,6 +320,28 @@ export const BookService: React.FC = () => {
                 Urgency: <span className="capitalize">{urgency}</span> • Elapsed: {matchingSeconds}s
               </div>
             </div>
+          </div>
+
+          {/* Payment Status Pill */}
+          <div className="mb-4">
+            {paymentData ? (
+              <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-surface border border-border text-xs">
+                <span className="font-bold text-text">
+                  Payment: {paymentData.payment_method === 'cash' ? '💵 Cash on Delivery' : '✓ Paid via ' + paymentData.payment_method?.toUpperCase()}
+                </span>
+                {paymentData.transaction_id && (
+                  <span className="text-[10px] text-text-muted font-mono">({paymentData.transaction_id})</span>
+                )}
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setPaymentModalOpen(true)}
+                className="text-xs font-bold text-primary hover:underline"
+              >
+                💳 Select Payment Method (GPay / PhonePe / Cash)
+              </button>
+            )}
           </div>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
@@ -442,9 +522,9 @@ export const BookService: React.FC = () => {
               </label>
               <div className="grid grid-cols-3 gap-2">
                 {[
-                  { id: 'normal', label: 'Normal', note: 'Standard SLA' },
-                  { id: 'high', label: 'Urgent', note: 'Within 30m' },
-                  { id: 'critical', label: 'Emergency', note: 'Top priority' },
+                  { id: 'normal', label: 'Normal', note: `₹${baseServicePrice} • Standard SLA` },
+                  { id: 'high', label: 'Urgent', note: `₹${Math.round(baseServicePrice * 1.35)} • Within 30m` },
+                  { id: 'critical', label: 'Emergency', note: `₹${Math.round(baseServicePrice * 1.75)} • Top priority` },
                 ].map((u) => {
                   const isSelected = urgency === u.id;
                   return (
@@ -484,7 +564,7 @@ export const BookService: React.FC = () => {
             <div className="text-right text-xs">
               <span className="text-text-muted">Estimated Arrival:</span>
               <span className="ml-1 font-bold text-status-success">
-                {closestTech ? `~${closestTech.eta_minutes} mins` : 'Immediate dispatch'}
+                {closestTech ? formatRoundedEta(closestTech.eta_minutes) : 'Immediate dispatch'}
               </span>
             </div>
           </div>
@@ -501,6 +581,20 @@ export const BookService: React.FC = () => {
           </Button>
         </Card>
       </form>
+
+      {/* Demo Payment Modal */}
+      {matchingBookingId && (
+        <DemoPaymentModal
+          isOpen={paymentModalOpen}
+          onClose={() => setPaymentModalOpen(false)}
+          bookingId={matchingBookingId}
+          amount={priceEstimate}
+          serviceName={selectedCategory?.name}
+          onPaymentSuccess={(pData) => {
+            setPaymentData(pData);
+          }}
+        />
+      )}
     </div>
   );
 };

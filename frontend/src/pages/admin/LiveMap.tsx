@@ -30,24 +30,19 @@ export const LiveMap: React.FC = () => {
         api.admin.getJobs({ limit: 50 }),
       ]);
 
-      // Center coords in Bangalore
-      const centerLat = 12.9716;
-      const centerLng = 77.5946;
-
-      const markers: MapMarker[] = (techRes.technicians || []).map((t: any, idx: number) => {
-        const angle = (idx / 5) * 2 * Math.PI;
-        const radius = 0.02 + (idx % 3) * 0.01;
-        return {
+      // Only show online technicians with known GPS coordinates
+      const markers: MapMarker[] = (techRes.technicians || [])
+        .filter((t: any) => t.is_online && t.lat && t.lng)
+        .map((t: any) => ({
           id: t.id,
-          lat: t.lat || centerLat + radius * Math.sin(angle),
-          lng: t.lng || centerLng + radius * Math.cos(angle),
+          lat: t.lat,
+          lng: t.lng,
           title: t.name,
-          subtitle: t.is_online ? 'Online & Available' : 'Currently Offline',
-          type: 'technician',
-          status: t.is_online ? 'online' : 'offline',
+          subtitle: `Online • Cert L${t.certification_level || 1} • ⭐${t.avg_rating || 5.0}`,
+          type: 'technician' as const,
+          status: 'online' as const,
           rating: t.avg_rating,
-        };
-      });
+        }));
 
       setTechMarkers(markers);
       setActiveJobs(
@@ -76,7 +71,7 @@ export const LiveMap: React.FC = () => {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-text">Fleet Real-Time Live Map</h1>
           <p className="text-xs text-text-muted mt-0.5">
-            Geographic dispersion of technicians, active assignments, and incoming demand
+            {techMarkers.length} online technician{techMarkers.length !== 1 ? 's' : ''} with live GPS • Auto-refreshes every 5s
           </p>
         </div>
 

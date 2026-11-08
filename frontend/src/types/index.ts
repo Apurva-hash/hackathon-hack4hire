@@ -126,10 +126,13 @@ export interface ServiceRequest {
   completion_notes?: string;
   created_at: string;
   customer_id?: string;
+  customer_name?: string;
+  customer_phone?: string;
   assigned_technician_id?: string;
   offer_attempt?: number;
   offer_attempts?: number;
   escalated?: boolean;
+  payment?: PaymentRecord;
   assigned_technician?: {
     id: string;
     name: string;
@@ -266,9 +269,31 @@ export interface FeedbackStats {
   recent_reviews: Rating[];
 }
 
+export interface PaymentRecord {
+  id: string;
+  transaction_id?: string;
+  service_request_id: string;
+  service_category?: string;
+  customer_name?: string;
+  technician_name?: string;
+  amount: number;
+  admin_share: number;
+  technician_share: number;
+  payment_method: 'cash' | 'gpay' | 'phonepe';
+  status: 'pending' | 'completed' | 'failed';
+  failure_reason?: string;
+  created_at?: string;
+  paid_at?: string;
+}
+
 export interface RevenueStats {
   total_revenue: number;
+  admin_earnings?: number;
+  technician_payouts?: number;
+  admin_share_percentage?: number;
+  technician_share_percentage?: number;
   total_completed_jobs: number;
+  payment_method_breakdown?: Record<string, number>;
   top_earning_technicians: {
     id: string;
     name: string;

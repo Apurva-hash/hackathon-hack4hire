@@ -43,9 +43,20 @@ class RefreshRequest(BaseModel):
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
+@router.post("/register/admin", status_code=status.HTTP_403_FORBIDDEN)
+def register_admin():
+    """Public admin registration is strictly disabled. Only the designated Admin account is permitted."""
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="Public admin registration is disabled. Only the designated administrator account is permitted.",
+    )
+
+
 @router.post("/register/customer", status_code=201)
 def register_customer(body: RegisterCustomerRequest, db: Session = Depends(get_db)):
     """Register a new customer account."""
+    if body.email.lower() == "admin11@gmail.com":
+        raise HTTPException(status_code=400, detail="This email address cannot be registered as customer")
     existing = db.query(User).filter(User.email == body.email.lower()).first()
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
@@ -77,6 +88,8 @@ def register_customer(body: RegisterCustomerRequest, db: Session = Depends(get_d
 @router.post("/register/technician", status_code=201)
 def register_technician(body: RegisterTechnicianRequest, db: Session = Depends(get_db)):
     """Register a new technician (requires admin approval before going online)."""
+    if body.email.lower() == "admin11@gmail.com":
+        raise HTTPException(status_code=400, detail="This email address cannot be registered as technician")
     existing = db.query(User).filter(User.email == body.email.lower()).first()
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
@@ -97,11 +110,13 @@ def register_technician(body: RegisterTechnicianRequest, db: Session = Depends(g
         name=body.name,
         phone=body.phone,
         bio=body.bio,
-        service_radius_km=body.service_radius_km,
-        certification_level=max(1, min(5, body.certification_level)),
-        is_online=False,
-        is_approved=False,
+        service_radius_km=body.service_radius_km or 30.0,
+        certification_level=max(1, min(5, body.certification_level or 3)),
+        is_online=True,
+        is_approved=True,
         is_suspended=False,
+        lat=12.9716,
+        lng=77.5946,
     )
     db.add(profile)
     db.commit()

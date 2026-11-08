@@ -34,6 +34,15 @@ def require_role(*roles: UserRole):
     return _checker
 
 
+def require_admin():
+    """Enforce that only the single authorized Admin account can access admin routes."""
+    def _checker(current_user: User = Depends(get_current_user)) -> User:
+        if current_user.role != UserRole.ADMIN or current_user.email.lower() != "admin11@gmail.com":
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access restricted to authorized administrator")
+        return current_user
+    return _checker
+
+
 get_current_customer = require_role(UserRole.CUSTOMER)
 get_current_technician = require_role(UserRole.TECHNICIAN)
-get_current_admin = require_role(UserRole.ADMIN)
+get_current_admin = require_admin()

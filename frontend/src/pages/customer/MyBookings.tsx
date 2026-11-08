@@ -7,6 +7,7 @@ import { Button } from '../../components/common/Button';
 import { Badge, StatusBadge } from '../../components/common/Badge';
 import { Stepper } from '../../components/common/Stepper';
 import { InteractiveMap, MapMarker } from '../../components/common/InteractiveMap';
+import { DemoPaymentModal } from '../../components/common/DemoPaymentModal';
 import { Modal } from '../../components/common/Modal';
 import { Tabs } from '../../components/common/Tabs';
 import { EmptyState } from '../../components/common/EmptyState';
@@ -36,14 +37,17 @@ export const MyBookings: React.FC = () => {
 
   // Live technician location data for selected booking
   const [techLocation, setTechLocation] = useState<{
-    lat: number;
-    lng: number;
-    distance_to_job_km: number;
-    eta_minutes: number;
+    lat?: number;
+    lng?: number;
+    distance_to_job_km?: number;
+    eta_minutes?: number;
+    eta_display?: string;
+    status?: string;
   } | null>(null);
 
   // Cancel Modal state
   const [cancelModalOpen, setCancelModalOpen] = useState(false);
+  const [payModalBooking, setPayModalBooking] = useState<ServiceRequest | null>(null);
   const [cancelBookingId, setCancelBookingId] = useState<string | null>(null);
   const [cancelLoading, setCancelLoading] = useState(false);
 
@@ -249,8 +253,17 @@ export const MyBookings: React.FC = () => {
                   </p>
 
                   <div className="flex items-center justify-between text-[11px] pt-2 border-t border-border text-text-muted">
-                    <span className="flex items-center gap-1 font-semibold text-text">
+                    <span className="flex items-center gap-1.5 font-semibold text-text">
                       ₹{b.estimated_price || 150}
+                      {b.payment && (
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                          b.payment.status === 'completed'
+                            ? 'bg-status-success/15 text-status-success'
+                            : 'bg-primary-tint text-primary'
+                        }`}>
+                          {b.payment.payment_method === 'cash' ? '💵 COD' : '✓ ' + b.payment.payment_method?.toUpperCase()}
+                        </span>
+                      )}
                     </span>
                     <span>
                       {new Date(b.created_at).toLocaleDateString([], {
@@ -295,7 +308,7 @@ export const MyBookings: React.FC = () => {
                       label: currentBooking.address,
                     }}
                     assignedTechnician={
-                      techLocation
+                      techLocation && techLocation.lat && techLocation.lng && techLocation.status !== 'offline'
                         ? {
                             id: 'live-tech',
                             lat: techLocation.lat,
@@ -332,7 +345,11 @@ export const MyBookings: React.FC = () => {
                         </div>
                         {techLocation && (
                           <div className="text-xs font-semibold text-primary mt-0.5">
-                            📍 ~{techLocation.eta_minutes} mins away ({techLocation.distance_to_job_km} km)
+                            {techLocation.status === 'offline' ? (
+                              <span className="text-status-neutral">Technician offline (tracking paused)</span>
+                            ) : (
+                              <span>📍 ETA: {techLocation.eta_display || `~${techLocation.eta_minutes} mins`} ({techLocation.distance_to_job_km} km)</span>
+                            )}
                           </div>
                         )}
                       </div>
@@ -363,6 +380,44 @@ export const MyBookings: React.FC = () => {
                     ⚡ DispatchGrid algorithm is currently offering your job to the highest ranked technician.
                   </div>
                 )}
+
+                {/* Payment Status & Pay Online CTA */}
+                <div className="p-3.5 rounded-card bg-surface-alt border border-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                  <div>
+                    <span className="text-[10px] uppercase font-bold text-text-muted block">Payment Method</span>
+                    <div className="font-bold text-text mt-0.5 flex items-center gap-1.5">
+                      {currentBooking.payment ? (
+                        <>
+                          <span>
+                            {currentBooking.payment.payment_method === 'cash'
+                              ? '💵 Cash on Delivery'
+                              : '✓ ' + (currentBooking.payment.payment_method === 'gpay' ? 'Google Pay (GPay)' : 'PhonePe UPI')}
+                          </span>
+                          <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                            currentBooking.payment.status === 'completed'
+                              ? 'bg-status-success/15 text-status-success'
+                              : 'bg-primary-tint text-primary'
+                          }`}>
+                            {currentBooking.payment.status === 'completed' ? 'Paid' : 'Pending'}
+                          </span>
+                        </>
+                      ) : (
+                        <span>💵 Cash on Delivery (Standard)</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {(!currentBooking.payment || currentBooking.payment.status !== 'completed') && (
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={() => setPayModalBooking(currentBooking)}
+                      className="w-full sm:w-auto"
+                    >
+                      💳 Pay Now (GPay / PhonePe)
+                    </Button>
+                  )}
+                </div>
 
                 {/* SLA Arrival Guarantee & Notice */}
                 <div className="p-3.5 rounded-card bg-primary-tint/30 border border-primary/20 flex items-center justify-between text-xs">
@@ -530,6 +585,21 @@ export const MyBookings: React.FC = () => {
           </div>
         </div>
       </Modal>
+
+      {/* Demo Payment Modal */}
+      {payModalBooking && (
+        <DemoPaymentModal
+          isOpen={!!payModalBooking}
+          onClose={() => setPayModalBooking(null)}
+          bookingId={payModalBooking.id}
+          amount={payModalBooking.estimated_price || 250}
+          serviceName={payModalBooking.category_name}
+          onPaymentSuccess={() => {
+            fetchBookings();
+            setPayModalBooking(null);
+          }}
+        />
+      )}
 
       {/* In-App Messaging Modal */}
       <Modal

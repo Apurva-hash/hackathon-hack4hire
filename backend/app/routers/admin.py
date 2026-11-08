@@ -302,15 +302,17 @@ def dashboard_revenue(
     df = _parse_date(date_from, "date_from")
     dt = _parse_date(date_to, "date_to")
 
-    q = db.query(ServiceRequest).filter(ServiceRequest.status == RequestStatus.COMPLETED)
-    if df:
-        q = q.filter(ServiceRequest.created_at >= df)
-    if dt:
-        q = q.filter(ServiceRequest.created_at <= dt)
+    from app.models import Payment, PaymentStatus
+    completed_payments = db.query(Payment).filter(Payment.status == PaymentStatus.COMPLETED).all()
 
-    total_revenue = db.query(func.sum(ServiceRequest.estimated_price)).filter(
+    total_revenue_from_payments = sum(p.amount for p in completed_payments)
+    total_rev_sr = db.query(func.sum(ServiceRequest.estimated_price)).filter(
         ServiceRequest.status == RequestStatus.COMPLETED
     ).scalar() or 0.0
+
+    effective_revenue = round(max(total_revenue_from_payments, total_rev_sr), 2)
+    admin_earnings = round(effective_revenue * 0.40, 2)
+    technician_payouts = round(effective_revenue * 0.60, 2)
 
     # Top earning technicians
     techs = (
@@ -321,9 +323,20 @@ def dashboard_revenue(
         .all()
     )
 
+    # Method breakdown
+    method_counts = {}
+    for p in completed_payments:
+        m = p.payment_method.value
+        method_counts[m] = method_counts.get(m, 0) + 1
+
     return {
-        "total_revenue": round(total_revenue, 2),
-        "total_completed_jobs": q.count(),
+        "total_revenue": effective_revenue,
+        "admin_earnings": admin_earnings,
+        "technician_payouts": technician_payouts,
+        "admin_share_percentage": 40,
+        "technician_share_percentage": 60,
+        "total_completed_jobs": db.query(ServiceRequest).filter(ServiceRequest.status == RequestStatus.COMPLETED).count(),
+        "payment_method_breakdown": method_counts,
         "top_earning_technicians": [
             {
                 "id": t.id,
@@ -333,6 +346,57 @@ def dashboard_revenue(
                 "avg_rating": t.avg_rating,
             }
             for t in techs
+        ],
+    }
+
+
+@router.get("/payments")
+def list_payments(
+    status: Optional[str] = Query(None),
+    payment_method: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    from app.models import Payment, PaymentStatus
+    q = db.query(Payment)
+    if status:
+        q = q.filter(Payment.status == status)
+    if payment_method:
+        q = q.filter(Payment.payment_method == payment_method)
+
+    total = q.count()
+    items = q.order_by(Payment.created_at.desc()).offset(offset).limit(limit).all()
+
+    completed_payments = db.query(Payment).filter(Payment.status == PaymentStatus.COMPLETED).all()
+    total_rev = round(sum(p.amount for p in completed_payments), 2)
+    admin_share = round(total_rev * 0.40, 2)
+    technician_payouts = round(total_rev * 0.60, 2)
+
+    return {
+        "total": total,
+        "total_revenue": total_rev,
+        "admin_earnings": admin_share,
+        "technician_payouts": technician_payouts,
+        "payments": [
+            {
+                "id": p.id,
+                "transaction_id": p.transaction_id,
+                "service_request_id": p.service_request_id,
+                "service_category": p.service_request.category.name if p.service_request and p.service_request.category else "Home Service",
+                "customer_name": p.customer.name if p.customer else "Customer",
+                "technician_name": p.technician_profile.name if p.technician_profile else "Unassigned",
+                "amount": p.amount,
+                "admin_share": p.admin_share,
+                "technician_share": p.technician_share,
+                "payment_method": p.payment_method.value,
+                "status": p.status.value,
+                "failure_reason": p.failure_reason,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+                "paid_at": p.paid_at.isoformat() if p.paid_at else None,
+            }
+            for p in items
         ],
     }
 
@@ -502,6 +566,8 @@ def list_technicians(
                 "is_online": t.is_online,
                 "is_approved": t.is_approved,
                 "is_suspended": t.is_suspended,
+                "lat": t.lat,
+                "lng": t.lng,
                 "certification_level": t.certification_level,
                 "avg_rating": t.avg_rating,
                 "total_jobs_completed": t.total_jobs_completed,

@@ -266,8 +266,23 @@ def create_booking(
 ):
     c = _get_customer(db, current_user)
 
-    # Validate category
-    cat = db.query(ServiceCategory).filter(ServiceCategory.id == body.category_id, ServiceCategory.is_active == True).first()  # noqa: E712
+    # Validate category — auto-seed if DB is missing categories (e.g. fresh Render deploy)
+    cat = db.query(ServiceCategory).filter(
+        ServiceCategory.id == body.category_id,
+        ServiceCategory.is_active == True,  # noqa: E712
+    ).first()
+    if not cat:
+        # Attempt to seed categories and retry once
+        try:
+            from app.seed.v2_seed import seed as _seed
+            _seed()
+            db.expire_all()
+            cat = db.query(ServiceCategory).filter(
+                ServiceCategory.id == body.category_id,
+                ServiceCategory.is_active == True,  # noqa: E712
+            ).first()
+        except Exception as _e:
+            logger.warning("Auto-seed in create_booking failed: %s", _e)
     if not cat:
         raise HTTPException(status_code=404, detail="Service category not found or inactive")
 

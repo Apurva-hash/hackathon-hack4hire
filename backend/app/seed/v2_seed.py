@@ -95,26 +95,49 @@ def seed():
             db.flush()
             print("  [OK] MatchingConfig singleton")
 
-        # ── Service Categories ────────────────────────────────────────────────
+        # ── Service Categories ─────────────────────────────────────────────────
+        # IMPORTANT: These IDs are fixed/deterministic so that they always match
+        # the DEFAULT_SERVICE_CATEGORIES hardcoded in the frontend BookService.tsx.
+        # Render's ephemeral SQLite DB is recreated on every deploy, so seed must
+        # produce the SAME UUIDs every time — never use generate_uuid() here.
         categories_data = [
-            {"name": "AC Service", "description": "Air conditioner installation, repair, and maintenance", "icon": "❄️", "price_per_minute": 3.0, "required_certification_level": 2},
-            {"name": "Plumbing", "description": "Pipe repair, leak fixing, drainage, and water heaters", "icon": "🔧", "price_per_minute": 2.5, "required_certification_level": 1},
-            {"name": "Electrical", "description": "Wiring, switchboard, MCB, fan, and light fittings", "icon": "⚡", "price_per_minute": 3.5, "required_certification_level": 3},
-            {"name": "Washing Machine", "description": "Washing machine repair and servicing", "icon": "🫧", "price_per_minute": 2.0, "required_certification_level": 1},
-            {"name": "Refrigerator", "description": "Refrigerator cooling, compressor, and general repair", "icon": "🧊", "price_per_minute": 2.5, "required_certification_level": 2},
-            {"name": "Painting", "description": "Interior and exterior wall painting", "icon": "🎨", "price_per_minute": 1.5, "required_certification_level": 1},
-            {"name": "Carpentry", "description": "Furniture assembly, repair, and woodwork", "icon": "🪑", "price_per_minute": 2.0, "required_certification_level": 1},
+            {"id": "b2929618-c561-4442-a767-ba2cb74b02c2", "name": "AC Service", "description": "Air conditioner installation, repair, and maintenance", "icon": "❄️", "price_per_minute": 3.0, "required_certification_level": 2},
+            {"id": "39952130-5456-4b08-8ddd-08ee102b4578", "name": "Plumbing", "description": "Pipe repair, leak fixing, drainage, and water heaters", "icon": "🔧", "price_per_minute": 2.5, "required_certification_level": 1},
+            {"id": "2544bf08-cd85-4756-8c4e-6386d6cd33a7", "name": "Electrical", "description": "Wiring, switchboard, MCB, fan, and light fittings", "icon": "⚡", "price_per_minute": 3.5, "required_certification_level": 3},
+            {"id": "24fd4b95-07ed-443e-a1ca-e64a6fd9b7f2", "name": "Washing Machine", "description": "Washing machine repair and servicing", "icon": "🫧", "price_per_minute": 2.0, "required_certification_level": 1},
+            {"id": "5ae2629c-e467-477c-9608-c6c330e72d35", "name": "Refrigerator", "description": "Refrigerator cooling, compressor, and general repair", "icon": "🧊", "price_per_minute": 2.5, "required_certification_level": 2},
+            {"id": "c5ad066c-fc2a-4720-85c8-8fb603d7b5ce", "name": "Painting", "description": "Interior and exterior wall painting", "icon": "🎨", "price_per_minute": 1.5, "required_certification_level": 1},
+            {"id": "e9510ae6-718f-48ab-b7c5-68c145052307", "name": "Carpentry", "description": "Furniture assembly, repair, and woodwork", "icon": "🪑", "price_per_minute": 2.0, "required_certification_level": 1},
         ]
-        categories = []
+        categories_added = 0
         for cd in categories_data:
-            existing_cat = db.query(ServiceCategory).filter(ServiceCategory.name == cd["name"]).first()
-            if not existing_cat:
-                cat = ServiceCategory(id=generate_uuid(), is_active=True, **cd)
+            fixed_id = cd["id"]
+            existing_by_id = db.query(ServiceCategory).filter(ServiceCategory.id == fixed_id).first()
+            if existing_by_id:
+                # Already present with correct ID — ensure it is active
+                if not existing_by_id.is_active:
+                    existing_by_id.is_active = True
+                continue
+            existing_by_name = db.query(ServiceCategory).filter(ServiceCategory.name == cd["name"]).first()
+            if existing_by_name:
+                # Present with wrong (random) ID from a previous seed run — update ID in place
+                existing_by_name.id = fixed_id
+                existing_by_name.is_active = True
+            else:
+                cat = ServiceCategory(
+                    id=fixed_id,
+                    name=cd["name"],
+                    description=cd["description"],
+                    icon=cd["icon"],
+                    price_per_minute=cd["price_per_minute"],
+                    required_certification_level=cd["required_certification_level"],
+                    is_active=True,
+                )
                 db.add(cat)
-                categories.append(cat)
+                categories_added += 1
         db.flush()
-        if categories:
-            print(f"  [OK] {len(categories)} service categories added")
+        if categories_added > 0:
+            print(f"  [OK] {categories_added} service categories added")
 
         # ── Admin user ────────────────────────────────────────────────────────
         existing_admin = db.query(User).filter(User.email == "admin@dispatchgrid.dev").first()

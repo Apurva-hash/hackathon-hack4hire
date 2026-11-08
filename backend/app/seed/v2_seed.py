@@ -11,6 +11,12 @@ from __future__ import annotations
 import sys
 import os
 
+# Reconfigure stdout and stderr for UTF-8 with fallback to avoid charmap UnicodeEncodeErrors on Windows
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 # Ensure the backend directory is on the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -54,27 +60,21 @@ TEST_CREDENTIALS = """
 def seed():
     db = SessionLocal()
     try:
-        # ── Guard: skip if already seeded ─────────────────────────────────────
-        existing_admin = db.query(User).filter(User.email == "admin@dispatchgrid.dev").first()
-        if existing_admin:
-            print("[seed] V2 seed data already present — skipping.")
-            print(TEST_CREDENTIALS)
-            return
-
-        print("[seed] Seeding V2 data...")
+        print("[seed] Checking and seeding V2 data...")
 
         # ── SLA Tiers ─────────────────────────────────────────────────────────
-        sla_tiers = [
-            SLATier(id=generate_uuid(), name="Critical", priority_level=1, response_time_minutes=15, resolution_time_minutes=60, is_default=False),
-            SLATier(id=generate_uuid(), name="High", priority_level=2, response_time_minutes=30, resolution_time_minutes=120, is_default=False),
-            SLATier(id=generate_uuid(), name="Normal", priority_level=3, response_time_minutes=60, resolution_time_minutes=240, is_default=True),
-            SLATier(id=generate_uuid(), name="Low", priority_level=4, response_time_minutes=120, resolution_time_minutes=480, is_default=False),
-        ]
-        for t in sla_tiers:
-            db.add(t)
-        db.flush()
-        print(f"  ✓ {len(sla_tiers)} SLA tiers")
-
+        existing_tiers_count = db.query(SLATier).count()
+        if existing_tiers_count == 0:
+            sla_tiers = [
+                SLATier(id=generate_uuid(), name="Critical", priority_level=1, response_time_minutes=15, resolution_time_minutes=60, is_default=False),
+                SLATier(id=generate_uuid(), name="High", priority_level=2, response_time_minutes=30, resolution_time_minutes=120, is_default=False),
+                SLATier(id=generate_uuid(), name="Normal", priority_level=3, response_time_minutes=60, resolution_time_minutes=240, is_default=True),
+                SLATier(id=generate_uuid(), name="Low", priority_level=4, response_time_minutes=120, resolution_time_minutes=480, is_default=False),
+            ]
+            for t in sla_tiers:
+                db.add(t)
+            db.flush()
+            print(f"  [OK] {len(sla_tiers)} SLA tiers")
         # ── MatchingConfig singleton ───────────────────────────────────────────
         existing_cfg = db.query(MatchingConfig).first()
         if not existing_cfg:
@@ -93,7 +93,7 @@ def seed():
             )
             db.add(cfg)
             db.flush()
-            print("  ✓ MatchingConfig singleton")
+            print("  [OK] MatchingConfig singleton")
 
         # ── Service Categories ────────────────────────────────────────────────
         categories_data = [
@@ -113,19 +113,22 @@ def seed():
                 db.add(cat)
                 categories.append(cat)
         db.flush()
-        print(f"  ✓ {len(categories)} service categories")
+        if categories:
+            print(f"  [OK] {len(categories)} service categories added")
 
         # ── Admin user ────────────────────────────────────────────────────────
-        admin_user = User(
-            id=generate_uuid(),
-            email="admin@dispatchgrid.dev",
-            hashed_password=hash_password("Admin@1234"),
-            role=UserRole.ADMIN,
-            is_active=True,
-        )
-        db.add(admin_user)
-        db.flush()
-        print("  ✓ Admin user")
+        existing_admin = db.query(User).filter(User.email == "admin@dispatchgrid.dev").first()
+        if not existing_admin:
+            admin_user = User(
+                id=generate_uuid(),
+                email="admin@dispatchgrid.dev",
+                hashed_password=hash_password("Admin@1234"),
+                role=UserRole.ADMIN,
+                is_active=True,
+            )
+            db.add(admin_user)
+            db.flush()
+            print("  [OK] Admin user")
 
         # ── Customer users ────────────────────────────────────────────────────
         customers_data = [
@@ -136,29 +139,34 @@ def seed():
             {"email": "carol@example.com", "name": "Carol Nair", "phone": "9876543212",
              "lat": 12.9784, "lng": 77.6408},
         ]
+        cust_count = 0
         for cd in customers_data:
-            lat, lng = cd.pop("lat"), cd.pop("lng")
-            u = User(
-                id=generate_uuid(),
-                email=cd["email"],
-                hashed_password=hash_password("Customer@1234"),
-                role=UserRole.CUSTOMER,
-                is_active=True,
-            )
-            db.add(u)
-            db.flush()
-            c = Customer(
-                id=generate_uuid(),
-                user_id=u.id,
-                name=cd["name"],
-                phone=cd["phone"],
-                saved_addresses=[{"label": "Home", "address": "Test Address", "lat": lat, "lng": lng}],
-                total_bookings=0,
-                avg_rating=0.0,
-            )
-            db.add(c)
+            existing_cust = db.query(User).filter(User.email == cd["email"]).first()
+            if not existing_cust:
+                lat, lng = cd.pop("lat"), cd.pop("lng")
+                u = User(
+                    id=generate_uuid(),
+                    email=cd["email"],
+                    hashed_password=hash_password("Customer@1234"),
+                    role=UserRole.CUSTOMER,
+                    is_active=True,
+                )
+                db.add(u)
+                db.flush()
+                c = Customer(
+                    id=generate_uuid(),
+                    user_id=u.id,
+                    name=cd["name"],
+                    phone=cd["phone"],
+                    saved_addresses=[{"label": "Home", "address": "Test Address", "lat": lat, "lng": lng}],
+                    total_bookings=0,
+                    avg_rating=0.0,
+                )
+                db.add(c)
+                cust_count += 1
         db.flush()
-        print("  ✓ 3 customer accounts")
+        if cust_count > 0:
+            print(f"  [OK] {cust_count} customer accounts")
 
         # ── Technician users ──────────────────────────────────────────────────
         techs_data = [
@@ -198,47 +206,53 @@ def seed():
                 "avg_rating": 4.6, "total_jobs_completed": 150,
             },
         ]
+        tech_count = 0
         for td in techs_data:
-            u = User(
-                id=generate_uuid(),
-                email=td["email"],
-                hashed_password=hash_password("Tech@1234"),
-                role=UserRole.TECHNICIAN,
-                is_active=True,
-            )
-            db.add(u)
-            db.flush()
-            profile = TechnicianProfile(
-                id=generate_uuid(),
-                user_id=u.id,
-                name=td["name"],
-                phone=td["phone"],
-                bio=td["bio"],
-                certification_level=td["certification_level"],
-                lat=td["lat"],
-                lng=td["lng"],
-                service_radius_km=td["service_radius_km"],
-                max_concurrent_jobs=3,
-                is_online=True,       # Start online for testing
-                is_approved=True,     # Pre-approved
-                is_suspended=False,
-                avg_rating=td["avg_rating"],
-                total_jobs_completed=td["total_jobs_completed"],
-                total_jobs_rejected=0,
-                acceptance_rate=1.0,
-                total_earnings=round(td["total_jobs_completed"] * 45.0, 2),
-            )
-            db.add(profile)
+            existing_tech = db.query(User).filter(User.email == td["email"]).first()
+            if not existing_tech:
+                u = User(
+                    id=generate_uuid(),
+                    email=td["email"],
+                    hashed_password=hash_password("Tech@1234"),
+                    role=UserRole.TECHNICIAN,
+                    is_active=True,
+                )
+                db.add(u)
+                db.flush()
+                profile = TechnicianProfile(
+                    id=generate_uuid(),
+                    user_id=u.id,
+                    name=td["name"],
+                    phone=td["phone"],
+                    bio=td["bio"],
+                    certification_level=td["certification_level"],
+                    lat=td["lat"],
+                    lng=td["lng"],
+                    service_radius_km=td["service_radius_km"],
+                    max_concurrent_jobs=3,
+                    is_online=True,       # Start online for testing
+                    is_approved=True,     # Pre-approved
+                    is_suspended=False,
+                    avg_rating=td["avg_rating"],
+                    total_jobs_completed=td["total_jobs_completed"],
+                    total_jobs_rejected=0,
+                    acceptance_rate=1.0,
+                    total_earnings=round(td["total_jobs_completed"] * 45.0, 2),
+                )
+                db.add(profile)
+                tech_count += 1
         db.flush()
-        print("  ✓ 5 technician accounts (online + approved)")
+        if tech_count > 0:
+            print(f"  [OK] {tech_count} technician accounts (online + approved)")
 
         db.commit()
-        print("\n[seed] ✅ V2 seed completed successfully!")
+        print("\n[seed] [OK] V2 seed completed successfully!")
         print(TEST_CREDENTIALS)
 
     except Exception as exc:
         db.rollback()
-        print(f"[seed] ❌ Error: {exc}")
+        print(f"[seed] [ERROR] {exc}")
+        raise
         raise
     finally:
         db.close()

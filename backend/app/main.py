@@ -100,7 +100,14 @@ app.add_middleware(
 
 @app.on_event("startup")
 def on_startup():
-    """Start the APScheduler background jobs on server startup."""
+    """Seed initial V2 data and start the APScheduler background jobs on server startup."""
+    try:
+        from app.seed.v2_seed import seed
+        seed()
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("V2 seeding on startup failed: %s", exc)
+
     try:
         from app.background.scheduler import start_scheduler
         start_scheduler()

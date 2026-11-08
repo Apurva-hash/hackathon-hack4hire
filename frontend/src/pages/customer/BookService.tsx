@@ -39,9 +39,12 @@ export const BookService: React.FC = () => {
     const fetchCats = async () => {
       try {
         const data = await api.customer.getCategories();
-        setCategories(data);
-        if (data.length > 0) {
-          setSelectedCatId(data[0].id);
+        const catsList: ServiceCategory[] = Array.isArray(data)
+          ? data
+          : (data as any)?.categories || (data as any)?.data || [];
+        setCategories(catsList);
+        if (catsList.length > 0) {
+          setSelectedCatId((prev) => prev || catsList[0].id);
         }
       } catch (err: any) {
         toastError('Failed to load categories', err.message);

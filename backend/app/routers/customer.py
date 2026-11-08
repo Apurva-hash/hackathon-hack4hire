@@ -182,6 +182,13 @@ def delete_address(
 @router.get("/categories")
 def list_categories(db: Session = Depends(get_db), _: User = Depends(get_current_customer)):
     cats = db.query(ServiceCategory).filter(ServiceCategory.is_active == True).all()  # noqa: E712
+    if not cats:
+        try:
+            from app.seed.v2_seed import seed
+            seed()
+            cats = db.query(ServiceCategory).filter(ServiceCategory.is_active == True).all()  # noqa: E712
+        except Exception as e:
+            logger.warning("Auto-seed categories failed: %s", e)
     return [
         {
             "id": c.id,

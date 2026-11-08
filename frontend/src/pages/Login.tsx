@@ -16,8 +16,8 @@ export const Login: React.FC = () => {
   const [selectedRole, setSelectedRole] = useState<UserRole>('customer');
 
   // Form fields
-  const [email, setEmail] = useState('alice@example.com');
-  const [password, setPassword] = useState('Customer@1234');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [certLevel, setCertLevel] = useState<number>(3);
@@ -35,16 +35,8 @@ export const Login: React.FC = () => {
   const handleRoleSelect = (role: UserRole) => {
     setSelectedRole(role);
     setErrorMsg(null);
-    if (role === 'admin') {
-      setEmail('admin@dispatchgrid.dev');
-      setPassword('Admin@1234');
-    } else if (role === 'technician') {
-      setEmail('raj.tech@example.com');
-      setPassword('Tech@1234');
-    } else {
-      setEmail('alice@example.com');
-      setPassword('Customer@1234');
-    }
+    setEmail('');
+    setPassword('');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

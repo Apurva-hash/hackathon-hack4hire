@@ -11,14 +11,78 @@ import { Skeleton } from '../../components/common/Skeleton';
 import { useToast } from '../../components/common/Toast';
 import { StarIcon, ClockIcon, NavigationIcon } from '../../components/common/Icons';
 
+// ── Default categories matching DispatchGrid v2 seed data ─────────────────────
+// These are the original platform categories. They display immediately while the
+// backend API response loads, and serve as a reliable fallback if the API returns
+// an empty list (e.g. on a fresh Render deploy where the SQLite DB is unseeded).
+const DEFAULT_SERVICE_CATEGORIES: ServiceCategory[] = [
+  {
+    id: 'b2929618-c561-4442-a767-ba2cb74b02c2',
+    name: 'AC Service',
+    description: 'Air conditioner installation, repair, and maintenance',
+    icon: '❄️',
+    price_per_minute: 3.0,
+    required_certification_level: 2,
+  },
+  {
+    id: '39952130-5456-4b08-8ddd-08ee102b4578',
+    name: 'Plumbing',
+    description: 'Pipe repair, leak fixing, drainage, and water heaters',
+    icon: '🔧',
+    price_per_minute: 2.5,
+    required_certification_level: 1,
+  },
+  {
+    id: '2544bf08-cd85-4756-8c4e-6386d6cd33a7',
+    name: 'Electrical',
+    description: 'Wiring, switchboard, MCB, fan, and light fittings',
+    icon: '⚡',
+    price_per_minute: 3.5,
+    required_certification_level: 3,
+  },
+  {
+    id: '24fd4b95-07ed-443e-a1ca-e64a6fd9b7f2',
+    name: 'Washing Machine',
+    description: 'Washing machine repair and servicing',
+    icon: '🫧',
+    price_per_minute: 2.0,
+    required_certification_level: 1,
+  },
+  {
+    id: '5ae2629c-e467-477c-9608-c6c330e72d35',
+    name: 'Refrigerator',
+    description: 'Refrigerator cooling, compressor, and general repair',
+    icon: '🧊',
+    price_per_minute: 2.5,
+    required_certification_level: 2,
+  },
+  {
+    id: 'c5ad066c-fc2a-4720-85c8-8fb603d7b5ce',
+    name: 'Painting',
+    description: 'Interior and exterior wall painting',
+    icon: '🎨',
+    price_per_minute: 1.5,
+    required_certification_level: 1,
+  },
+  {
+    id: 'e9510ae6-718f-48ab-b7c5-68c145052307',
+    name: 'Carpentry',
+    description: 'Furniture assembly, repair, and woodwork',
+    icon: '🪑',
+    price_per_minute: 2.0,
+    required_certification_level: 1,
+  },
+];
+
 export const BookService: React.FC = () => {
   const navigate = useNavigate();
   const { success, error: toastError } = useToast();
 
-  const [categories, setCategories] = useState<ServiceCategory[]>([]);
-  const [selectedCatId, setSelectedCatId] = useState<string>('');
+  // Pre-populate with default categories so the grid is never blank on load
+  const [categories, setCategories] = useState<ServiceCategory[]>(DEFAULT_SERVICE_CATEGORIES);
+  const [selectedCatId, setSelectedCatId] = useState<string>(DEFAULT_SERVICE_CATEGORIES[0].id);
   const [nearbyTechs, setNearbyTechs] = useState<NearbyTechnician[]>([]);
-  const [loadingCats, setLoadingCats] = useState(true);
+  const [loadingCats, setLoadingCats] = useState(false);
   const [loadingTechs, setLoadingTechs] = useState(false);
 
   // Customer Location & Form fields
@@ -34,7 +98,7 @@ export const BookService: React.FC = () => {
   const [matchingBookingId, setMatchingBookingId] = useState<string | null>(null);
   const [matchingSeconds, setMatchingSeconds] = useState(0);
 
-  // Load Categories on mount
+  // Load Categories on mount — syncs with backend; falls back to DEFAULT_SERVICE_CATEGORIES
   useEffect(() => {
     const fetchCats = async () => {
       try {
@@ -42,12 +106,17 @@ export const BookService: React.FC = () => {
         const catsList: ServiceCategory[] = Array.isArray(data)
           ? data
           : (data as any)?.categories || (data as any)?.data || [];
-        setCategories(catsList);
         if (catsList.length > 0) {
-          setSelectedCatId((prev) => prev || catsList[0].id);
+          // Backend returned categories — use them and keep the selection valid
+          setCategories(catsList);
+          setSelectedCatId((prev) =>
+            prev && catsList.some((c: ServiceCategory) => c.id === prev) ? prev : catsList[0].id
+          );
         }
-      } catch (err: any) {
-        toastError('Failed to load categories', err.message);
+        // If catsList is empty the defaults already in state are shown — no action needed
+      } catch {
+        // Silently fall back to DEFAULT_SERVICE_CATEGORIES already set in state
+        console.warn('Could not load categories from backend; using platform defaults.');
       } finally {
         setLoadingCats(false);
       }

@@ -106,7 +106,7 @@ def on_startup():
         seed()
     except Exception as exc:
         import logging
-        logging.getLogger(__name__).warning("V2 seeding on startup failed: %s", exc)
+        logging.getLogger(__name__).error("V2 seeding on startup failed: %s", exc, exc_info=True)
 
     try:
         from app.background.scheduler import start_scheduler

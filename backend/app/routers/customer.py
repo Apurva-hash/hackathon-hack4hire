@@ -184,11 +184,12 @@ def list_categories(db: Session = Depends(get_db), _: User = Depends(get_current
     cats = db.query(ServiceCategory).filter(ServiceCategory.is_active == True).all()  # noqa: E712
     if not cats:
         try:
-            from app.seed.v2_seed import seed
-            seed()
+            from app.seed.v2_seed import seed_categories
+            seed_categories(db)
+            db.commit()
             cats = db.query(ServiceCategory).filter(ServiceCategory.is_active == True).all()  # noqa: E712
         except Exception as e:
-            logger.warning("Auto-seed categories failed: %s", e)
+            logger.error("Auto-seed categories in list_categories failed: %s", e, exc_info=True)
     return [
         {
             "id": c.id,
@@ -225,6 +226,11 @@ def nearby_technicians(
     # Optional skill filter via category
     if category_id:
         cat = db.query(ServiceCategory).filter(ServiceCategory.id == category_id).first()
+        if not cat:
+            from app.seed.v2_seed import CATEGORY_ID_TO_NAME
+            cat_name = CATEGORY_ID_TO_NAME.get(category_id)
+            if cat_name:
+                cat = db.query(ServiceCategory).filter(ServiceCategory.name == cat_name).first()
         if cat and cat.skill_id:
             # Only include techs linked to legacy Technician with this skill
             q = q.filter(TechnicianProfile.technician_id.isnot(None))
@@ -272,18 +278,39 @@ def create_booking(
         ServiceCategory.is_active == True,  # noqa: E712
     ).first()
     if not cat:
-        # Attempt to seed categories and retry once
+        # Attempt to seed categories directly with current session and retry
         try:
-            from app.seed.v2_seed import seed as _seed
-            _seed()
-            db.expire_all()
+            from app.seed.v2_seed import seed_categories
+            seed_categories(db)
+            db.commit()
             cat = db.query(ServiceCategory).filter(
                 ServiceCategory.id == body.category_id,
                 ServiceCategory.is_active == True,  # noqa: E712
             ).first()
         except Exception as _e:
-            logger.warning("Auto-seed in create_booking failed: %s", _e)
+            logger.error("Auto-seed in create_booking failed: %s", _e, exc_info=True)
+
+    # If category ID wasn't matched directly (e.g. if an existing referenced category
+    # kept an older legacy ID), look it up by canonical name mapping
     if not cat:
+        from app.seed.v2_seed import CATEGORY_ID_TO_NAME
+        cat_name = CATEGORY_ID_TO_NAME.get(body.category_id)
+        if cat_name:
+            cat = db.query(ServiceCategory).filter(
+                ServiceCategory.name == cat_name,
+                ServiceCategory.is_active == True,  # noqa: E712
+            ).first()
+            if cat:
+                # Update body.category_id to the actual DB ID so foreign key succeeds
+                body.category_id = cat.id
+
+    # Strictly preserve active-category validation
+    if not cat or not cat.is_active:
+        logger.warning(
+            "Booking rejected: Category '%s' not found or inactive (user=%s)",
+            body.category_id,
+            current_user.id,
+        )
         raise HTTPException(status_code=404, detail="Service category not found or inactive")
 
     sr = ServiceRequest(

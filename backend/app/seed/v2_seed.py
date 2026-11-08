@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import sys
 import os
+import logging
+
+logger = logging.getLogger("app.seed.v2_seed")
 
 # Reconfigure stdout and stderr for UTF-8 with fallback to avoid charmap UnicodeEncodeErrors on Windows
 if sys.stdout and hasattr(sys.stdout, "reconfigure"):
@@ -20,11 +23,12 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
 # Ensure the backend directory is on the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
+from sqlalchemy.orm import Session
 from app.database import SessionLocal, engine, Base
 from app import models  # registers all models
 from app.models import (
     User, Customer, TechnicianProfile, ServiceCategory,
-    SLATier, MatchingConfig, Notification,
+    SLATier, MatchingConfig, Notification, ServiceRequest,
     UserRole,
 )
 from app.models.base import generate_uuid
@@ -32,6 +36,141 @@ from app.services.auth_service import hash_password
 
 # Create all tables
 Base.metadata.create_all(bind=engine)
+
+
+# ── Canonical Service Categories ──────────────────────────────────────────────
+# Fixed deterministic IDs matching frontend DEFAULT_SERVICE_CATEGORIES in BookService.tsx
+CATEGORIES_DATA = [
+    {
+        "id": "b2929618-c561-4442-a767-ba2cb74b02c2",
+        "name": "AC Service",
+        "description": "Air conditioner installation, repair, and maintenance",
+        "icon": "❄️",
+        "price_per_minute": 3.0,
+        "required_certification_level": 2,
+    },
+    {
+        "id": "39952130-5456-4b08-8ddd-08ee102b4578",
+        "name": "Plumbing",
+        "description": "Pipe repair, leak fixing, drainage, and water heaters",
+        "icon": "🔧",
+        "price_per_minute": 2.5,
+        "required_certification_level": 1,
+    },
+    {
+        "id": "2544bf08-cd85-4756-8c4e-6386d6cd33a7",
+        "name": "Electrical",
+        "description": "Wiring, switchboard, MCB, fan, and light fittings",
+        "icon": "⚡",
+        "price_per_minute": 3.5,
+        "required_certification_level": 3,
+    },
+    {
+        "id": "24fd4b95-07ed-443e-a1ca-e64a6fd9b7f2",
+        "name": "Washing Machine",
+        "description": "Washing machine repair and servicing",
+        "icon": "🫧",
+        "price_per_minute": 2.0,
+        "required_certification_level": 1,
+    },
+    {
+        "id": "5ae2629c-e467-477c-9608-c6c330e72d35",
+        "name": "Refrigerator",
+        "description": "Refrigerator cooling, compressor, and general repair",
+        "icon": "🧊",
+        "price_per_minute": 2.5,
+        "required_certification_level": 2,
+    },
+    {
+        "id": "c5ad066c-fc2a-4720-85c8-8fb603d7b5ce",
+        "name": "Painting",
+        "description": "Interior and exterior wall painting",
+        "icon": "🎨",
+        "price_per_minute": 1.5,
+        "required_certification_level": 1,
+    },
+    {
+        "id": "e9510ae6-718f-48ab-b7c5-68c145052307",
+        "name": "Carpentry",
+        "description": "Furniture assembly, repair, and woodwork",
+        "icon": "🪑",
+        "price_per_minute": 2.0,
+        "required_certification_level": 1,
+    },
+]
+
+CATEGORY_ID_TO_NAME = {cd["id"]: cd["name"] for cd in CATEGORIES_DATA}
+
+
+def seed_categories(db: Session) -> int:
+    """Seed or update the 7 canonical service categories.
+
+    - Idempotent: safe to run multiple times without duplicate creation.
+    - Preserves existing category IDs if referenced by bookings or other records.
+    - Corrects any misspelled keys and sets required_certification_level properly.
+    - Ensures is_active=True on all categories.
+    """
+    categories_added = 0
+    for cd in CATEGORIES_DATA:
+        fixed_id = cd["id"]
+        # Handle all occurrences or potential misspellings of required_certification_level
+        cert_level = (
+            cd.get("required_certification_level")
+            or cd.get("required_cert_level")
+            or cd.get("required_certification")
+            or 1
+        )
+
+        # 1. Check if category exists with the fixed canonical ID
+        existing_by_id = db.query(ServiceCategory).filter(ServiceCategory.id == fixed_id).first()
+        if existing_by_id:
+            if not existing_by_id.is_active:
+                existing_by_id.is_active = True
+            if existing_by_id.required_certification_level != cert_level:
+                existing_by_id.required_certification_level = cert_level
+            continue
+
+        # 2. Check if category exists by name
+        existing_by_name = db.query(ServiceCategory).filter(ServiceCategory.name == cd["name"]).first()
+        if existing_by_name:
+            if not existing_by_name.is_active:
+                existing_by_name.is_active = True
+            if existing_by_name.required_certification_level != cert_level:
+                existing_by_name.required_certification_level = cert_level
+
+            # Check if referenced by existing bookings or other records before altering ID
+            is_referenced = (
+                db.query(ServiceRequest).filter(ServiceRequest.category_id == existing_by_name.id).first() is not None
+            )
+            if not is_referenced and existing_by_name.id != fixed_id:
+                existing_by_name.id = fixed_id
+                logger.info("[seed] Updated category '%s' ID to fixed ID %s", cd["name"], fixed_id)
+            elif is_referenced:
+                logger.info(
+                    "[seed] Category '%s' (ID: %s) is referenced by records; preserving ID",
+                    existing_by_name.name,
+                    existing_by_name.id,
+                )
+            continue
+
+        # 3. Category does not exist — create it with canonical ID
+        cat = ServiceCategory(
+            id=fixed_id,
+            name=cd["name"],
+            description=cd["description"],
+            icon=cd["icon"],
+            price_per_minute=cd["price_per_minute"],
+            required_certification_level=cert_level,
+            is_active=True,
+        )
+        db.add(cat)
+        categories_added += 1
+
+    db.flush()
+    if categories_added > 0:
+        logger.info("[seed] %d service categories added", categories_added)
+        print(f"  [OK] {categories_added} service categories added")
+    return categories_added
 
 
 TEST_CREDENTIALS = """
@@ -96,48 +235,7 @@ def seed():
             print("  [OK] MatchingConfig singleton")
 
         # ── Service Categories ─────────────────────────────────────────────────
-        # IMPORTANT: These IDs are fixed/deterministic so that they always match
-        # the DEFAULT_SERVICE_CATEGORIES hardcoded in the frontend BookService.tsx.
-        # Render's ephemeral SQLite DB is recreated on every deploy, so seed must
-        # produce the SAME UUIDs every time — never use generate_uuid() here.
-        categories_data = [
-            {"id": "b2929618-c561-4442-a767-ba2cb74b02c2", "name": "AC Service", "description": "Air conditioner installation, repair, and maintenance", "icon": "❄️", "price_per_minute": 3.0, "required_certification_level": 2},
-            {"id": "39952130-5456-4b08-8ddd-08ee102b4578", "name": "Plumbing", "description": "Pipe repair, leak fixing, drainage, and water heaters", "icon": "🔧", "price_per_minute": 2.5, "required_certification_level": 1},
-            {"id": "2544bf08-cd85-4756-8c4e-6386d6cd33a7", "name": "Electrical", "description": "Wiring, switchboard, MCB, fan, and light fittings", "icon": "⚡", "price_per_minute": 3.5, "required_certification_level": 3},
-            {"id": "24fd4b95-07ed-443e-a1ca-e64a6fd9b7f2", "name": "Washing Machine", "description": "Washing machine repair and servicing", "icon": "🫧", "price_per_minute": 2.0, "required_certification_level": 1},
-            {"id": "5ae2629c-e467-477c-9608-c6c330e72d35", "name": "Refrigerator", "description": "Refrigerator cooling, compressor, and general repair", "icon": "🧊", "price_per_minute": 2.5, "required_certification_level": 2},
-            {"id": "c5ad066c-fc2a-4720-85c8-8fb603d7b5ce", "name": "Painting", "description": "Interior and exterior wall painting", "icon": "🎨", "price_per_minute": 1.5, "required_certification_level": 1},
-            {"id": "e9510ae6-718f-48ab-b7c5-68c145052307", "name": "Carpentry", "description": "Furniture assembly, repair, and woodwork", "icon": "🪑", "price_per_minute": 2.0, "required_certification_level": 1},
-        ]
-        categories_added = 0
-        for cd in categories_data:
-            fixed_id = cd["id"]
-            existing_by_id = db.query(ServiceCategory).filter(ServiceCategory.id == fixed_id).first()
-            if existing_by_id:
-                # Already present with correct ID — ensure it is active
-                if not existing_by_id.is_active:
-                    existing_by_id.is_active = True
-                continue
-            existing_by_name = db.query(ServiceCategory).filter(ServiceCategory.name == cd["name"]).first()
-            if existing_by_name:
-                # Present with wrong (random) ID from a previous seed run — update ID in place
-                existing_by_name.id = fixed_id
-                existing_by_name.is_active = True
-            else:
-                cat = ServiceCategory(
-                    id=fixed_id,
-                    name=cd["name"],
-                    description=cd["description"],
-                    icon=cd["icon"],
-                    price_per_minute=cd["price_per_minute"],
-                    required_certification_level=cd["required_certification_level"],
-                    is_active=True,
-                )
-                db.add(cat)
-                categories_added += 1
-        db.flush()
-        if categories_added > 0:
-            print(f"  [OK] {categories_added} service categories added")
+        seed_categories(db)
 
         # ── Admin user ────────────────────────────────────────────────────────
         existing_admin = db.query(User).filter(User.email == "admin@dispatchgrid.dev").first()
@@ -269,13 +367,14 @@ def seed():
             print(f"  [OK] {tech_count} technician accounts (online + approved)")
 
         db.commit()
+        logger.info("[seed] V2 seed completed successfully")
         print("\n[seed] [OK] V2 seed completed successfully!")
         print(TEST_CREDENTIALS)
 
     except Exception as exc:
         db.rollback()
+        logger.error("[seed] [ERROR] V2 seeding failed: %s", exc, exc_info=True)
         print(f"[seed] [ERROR] {exc}")
-        raise
         raise
     finally:
         db.close()
